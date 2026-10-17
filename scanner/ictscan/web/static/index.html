@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Overview</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<main>
+  <div id="banner"></div>
+  <h1>Top-down overview</h1>
+  <div class="panel"><table id="grid"></table>
+    <p class="small muted">Bias = 4H structure state. A-grade = 1H agrees. W1/D1 are shown for context; per the strategy they supply key levels, not direction.</p></div>
+  <h2>Active setups</h2>
+  <div class="panel"><table id="active"></table></div>
+  <h2>Recently closed</h2>
+  <div class="panel"><table id="recent"></table></div>
+  <p class="small muted">Alerts are <b>unvalidated</b> until the backtest is complete. Nothing here is trading advice; the scanner never places orders.</p>
+</main>
+<script src="/static/common.js"></script>
+<script>
+startShell();
+async function load() {
+  const d = await api('/api/overview');
+  setUnread(d.unread); setHealth(d.health);
+  const h = d.health;
+  document.getElementById('banner').innerHTML = h && h.status !== 'ok' ? `<div class="banner ${esc(h.status)}"><b>${esc(h.status)}</b> — ${esc(h.message)}</div>` : '';
+  const count = {}; d.active.forEach(s => count[s.symbol] = (count[s.symbol] || 0) + 1);
+  document.getElementById('grid').innerHTML = `<tr><th>Symbol</th><th>Price</th>${TFS.map(t => `<th>${t.toUpperCase()}</th>`).join('')}<th>4H position</th><th>Alignment</th><th>Active</th><th>Read</th></tr>` +
+    d.symbols.map(r => r.missing ? `<tr><td>${r.symbol}</td><td colspan="11" class="muted">waiting for first scan…</td></tr>` :
+      `<tr><td><a href="/symbol/${r.symbol}"><b>${r.symbol}</b></a><div class="small muted">${esc(r.as_of_ny)} NY</div></td><td class="mono">${r.price}</td>
+       ${TFS.map(t => `<td>${pill(r.states[t])}</td>`).join('')}
+       <td>${r.h4_position ? `${r.h4_position.pct}% <span class="small muted">${r.h4_position.zone}</span>` : '—'}</td>
+       <td>${r.aligned && r.bias !== 'undefined' ? '<span class="ok">A-grade</span>' : '<span class="muted">pullback</span>'}</td>
+       <td>${count[r.symbol] || 0}</td><td class="small">${esc(r.narrative[r.narrative.length - 1] || '')}</td></tr>`).join('');
+  document.getElementById('active').innerHTML = SETUP_HEAD + (d.active.length ? d.active.map(setupRow).join('') : '<tr><td colspan="7" class="muted">No active setups.</td></tr>');
+  document.getElementById('recent').innerHTML = SETUP_HEAD + (d.recent.length ? d.recent.map(setupRow).join('') : '<tr><td colspan="7" class="muted">None yet.</td></tr>');
+}
+load(); setInterval(load, 30000);
+</script>
+</body></html>

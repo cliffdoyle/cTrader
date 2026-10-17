@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Setup</title><link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script></head>
+<body>
+<main>
+  <h1 id="title">…</h1>
+  <div class="grid cols-2">
+    <div class="panel"><h3>Why this setup</h3><ul class="tight" id="reasons"></ul></div>
+    <div class="panel"><h3>Trade plan</h3><div class="kv" id="plan"></div></div>
+  </div>
+  <h2>Checklist</h2>
+  <div class="panel"><div class="check" id="checklist"></div></div>
+  <h2>Chart</h2>
+  <div class="panel"><div class="tabs" id="tf-tabs"></div><div id="chart" class="chart"></div></div>
+  <h2>Timeline</h2>
+  <div class="panel"><table id="timeline"></table></div>
+  <p class="small muted">Unvalidated until the backtest is complete. The scanner never places orders.</p>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/chart.js"></script>
+<script>
+startShell();
+const SID = decodeURIComponent(location.pathname.split('/').pop());
+let s, tf, chart;
+const COLORS = { watch: '#58a6ff', armed: '#f0b429', limit: '#f0b429', triggered: '#a371f7', target: '#26a69a', stopped: '#ef5350', invalidated: '#8b98a8', expired: '#8b98a8', missed: '#8b98a8' };
+
+async function drawChart() {
+  if (!chart) chart = makeChart(document.getElementById('chart'), DIGITS[s.symbol]);
+  const last = s.timeline.length ? new Date(s.timeline[s.timeline.length - 1].t).getTime() / 1000 : null;
+  const end = last ? Math.floor(last + TF_SEC[tf] * 60) : null;
+  const data = await api(`/api/bars/${s.symbol}/${tf}?n=300${end ? '&end=' + end : ''}`);
+  chart.series.setData(data); clearOverlays(chart);
+  zone(chart, s.poi.low, s.poi.high, s.dir === 'bullish' ? '#3fb950' : '#f85149', s.poi.kind);
+  if (s.poi.eq_level) hline(chart, s.poi.eq_level, '#d29922', 'equal ' + (s.dir === 'bearish' ? 'highs' : 'lows'), 1);
+  if (s.poi.range) hline(chart, s.poi.range.mid, '#8b98a8', 'range 50%', 3);
+  if (s.entry != null) {
+    hline(chart, s.entry, '#f0f6fc', 'entry', 0, 2); hline(chart, s.stop, '#ef5350', 'stop', 0, 2);
+    hline(chart, s.tp1, '#26a69a', 'TP1', 0, 2); hline(chart, s.tp2, '#2ea043', 'TP2 (D1)', 2); hline(chart, s.tp3, '#238636', 'TP3 (W1)', 2);
+  }
+  s.timeline.forEach(ev => addMarker(chart, data, ev.t, { position: 'aboveBar', color: COLORS[ev.stage] || '#fff', shape: 'circle', text: ev.stage }));
+  chart.chart.timeScale().fitContent();
+}
+
+function renderTabs() {
+  const opts = [...new Set([s.poi_tf, s.confirm_tf, 'h4', 'h1', 'm15', 'm5'])];
+  document.getElementById('tf-tabs').innerHTML = opts.map(x => `<button class="${x === tf ? 'on' : ''}" data-tf="${x}">${x.toUpperCase()}</button>`).join('');
+  document.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { tf = b.dataset.tf; renderTabs(); drawChart(); });
+}
+
+async function load() {
+  s = await api(`/api/setup/${encodeURIComponent(SID)}`);
+  tf = tf || s.confirm_tf;
+  document.title = `ICT Scanner — ${s.symbol} ${s.setup}`;
+  document.getElementById('title').innerHTML = `<a href="/symbol/${s.symbol}">${s.symbol}</a> ${s.setup} · ${esc(s.name)} ${arrow(s.dir)} ${stage(s.stage)} <span class="small muted">score ${s.score}/7</span>`;
+  document.getElementById('reasons').innerHTML = s.reasons.map(r => `<li>${esc(r)}</li>`).join('');
+  const rows = [['POI', `${esc(s.poi.kind)} <span class="mono">${s.poi.low} – ${s.poi.high}</span>`], ['Timeframes', `${s.poi_tf.toUpperCase()} → confirm ${s.confirm_tf.toUpperCase()}`],
+    ['Entry', s.entry ?? '<span class="muted">waiting for confirmation</span>'], ['Stop', s.stop ?? '—'],
+    ['TP1', s.tp1 != null ? `${s.tp1} <span class="small muted">${esc(s.tp1_name)}</span>` : '—'], ['TP2 (daily)', s.tp2 ?? '—'], ['TP3 (weekly)', s.tp3 ?? '—'],
+    ['R:R to TP1', s.rr != null ? s.rr + 'R' : '—'], ['Result', s.result_r != null ? `<span class="${s.result_r > 0 ? 'bull' : 'bear'}">${fmtR(s.result_r)}</span>` : '—']];
+  document.getElementById('plan').innerHTML = rows.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+  document.getElementById('checklist').innerHTML = s.checklist.map(c => `<div class="${c.ok === true ? 'ok' : c.ok === false ? 'no' : 'na'}">${c.ok === true ? '✓' : c.ok === false ? '✗' : '…'}</div><div><b>${esc(c.name)}</b> <span class="small muted">${esc(c.detail)}</span></div>`).join('');
+  document.getElementById('timeline').innerHTML = '<tr><th>Stage</th><th>Time (NY)</th><th>Price</th><th>Note</th></tr>' +
+    s.timeline.map(ev => `<tr><td>${stage(ev.stage)}</td><td>${esc(ev.ny)}</td><td class="mono">${ev.price ?? ''}</td><td>${esc(ev.note)}</td></tr>`).join('');
+  renderTabs(); drawChart();
+}
+load();
+</script>
+</body></html>

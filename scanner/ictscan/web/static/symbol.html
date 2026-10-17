@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Symbol</title><link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script></head>
+<body>
+<main>
+  <h1 id="title">…</h1>
+  <div class="panel"><h3>Top-down read</h3><ul class="tight" id="narrative"></ul></div>
+  <h2>Chart</h2>
+  <div class="panel">
+    <div class="tabs" id="tf-tabs"></div>
+    <div class="tabs" id="layers"></div>
+    <div id="chart" class="chart"></div>
+    <p class="small muted">Times are New York. Zones are drawn as top/bottom lines. Markers: BOS/CHoCH on the selected timeframe.</p>
+  </div>
+  <h2>Timeframes (top → down)</h2>
+  <div class="grid cols-3" id="tfs"></div>
+  <h2>Weekly / daily key levels near price</h2>
+  <div class="panel"><table id="zones"></table></div>
+  <h2>Setups</h2>
+  <div class="panel"><table id="setups"></table></div>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/chart.js"></script>
+<script>
+startShell();
+const SYM = decodeURIComponent(location.pathname.split('/').pop());
+const LAYERS = { zones: 'W/D key levels', structure: 'Structure', pois: 'FVGs & order blocks', liquidity: 'Liquidity', setups: 'Active setups' };
+let snap, setups, tf = 'h1', on = { zones: true, structure: true, pois: true, liquidity: false, setups: true }, chart, data = [];
+
+function tfCard(t) {
+  const ev = t.events.slice().reverse().map(e => `<li>${pill(e.dir)} <b>${e.kind}</b> ${esc(e.ny)} — close ${e.close} beyond ${e.level}</li>`).join('');
+  const fv = (t.fvgs || []).map(f => `<li>${pill(f.dir)} ${f.low}–${f.high} <span class="muted small">${f.status}, ${esc(f.ny)}</span></li>`).join('');
+  const ob = (t.order_blocks || []).map(o => `<li>${pill(o.dir)} ${o.low}–${o.high} <span class="muted small">${o.tapped ? 'tapped' : 'untapped'}, ${esc(o.ny)}</span></li>`).join('');
+  const lq = t.liquidity ? `<div class="small"><b>Above:</b> ${t.liquidity.above.map(x => `${esc(x.name)} ${x.price}`).join(', ') || '—'}<br><b>Below:</b> ${t.liquidity.below.map(x => `${esc(x.name)} ${x.price}`).join(', ') || '—'}</div>` : '';
+  return `<div class="panel"><div class="card-title"><h3>${t.label}</h3>${pill(t.state)}</div>
+    <div class="kv small"><div>Protected</div><div class="mono">${t.protected ?? '—'}</div>
+    <div>Dealing range</div><div class="mono">${t.range ? `${t.range.low} – ${t.range.high} (50% ${t.range.mid})` : '—'}</div>
+    <div>Price position</div><div>${t.position ? `${t.position.pct}% · ${t.position.zone}` : '—'}</div></div>
+    <div class="small" style="margin-top:6px"><b>Recent breaks</b></div><ul class="tight small">${ev || '<li class="muted">none</li>'}</ul>
+    ${fv ? `<div class="small"><b>Open FVGs</b></div><ul class="tight small">${fv}</ul>` : ''}
+    ${ob ? `<div class="small"><b>Order blocks</b></div><ul class="tight small">${ob}</ul>` : ''}${lq}</div>`;
+}
+
+async function drawChart() {
+  if (!chart) chart = makeChart(document.getElementById('chart'), DIGITS[SYM]);
+  data = await api(`/api/bars/${SYM}/${tf}?n=400`);
+  chart.series.setData(data); clearOverlays(chart);
+  const t = snap.timeframes[tf];
+  if (on.zones) snap.zones.forEach(z => zone(chart, z.low, z.high, z.tf === 'w1' ? '#a371f7' : '#d29922', `${z.tf.toUpperCase()} key ${z.strength}/5`));
+  if (on.structure) {
+    hline(chart, t.protected, '#58a6ff', `${tf.toUpperCase()} protected`, 0, 2);
+    if (t.range) hline(chart, t.range.mid, '#8b98a8', `${tf.toUpperCase()} 50%`, 3);
+    t.events.forEach(e => addMarker(chart, data, e.break_t, { position: e.dir === 'bullish' ? 'belowBar' : 'aboveBar', color: e.dir === 'bullish' ? '#26a69a' : '#ef5350', shape: e.dir === 'bullish' ? 'arrowUp' : 'arrowDown', text: e.kind }));
+  }
+  if (on.pois) {
+    (t.fvgs || []).forEach(f => zone(chart, f.low, f.high, f.dir === 'bullish' ? '#2ea043' : '#da3633', `${tf.toUpperCase()} FVG`));
+    (t.order_blocks || []).forEach(o => zone(chart, o.low, o.high, o.dir === 'bullish' ? '#3fb950' : '#f85149', `${tf.toUpperCase()} OB`));
+  }
+  if (on.liquidity && t.liquidity) {
+    t.liquidity.above.forEach(x => hline(chart, x.price, '#1f6feb', x.name, 1));
+    t.liquidity.below.forEach(x => hline(chart, x.price, '#bb8009', x.name, 1));
+  }
+  if (on.setups) setups.filter(s => ['armed', 'limit', 'triggered', 'watch'].includes(s.stage) && s.entry != null).forEach(s => {
+    hline(chart, s.entry, '#f0f6fc', `${s.setup} entry`, 0); hline(chart, s.stop, '#ef5350', `${s.setup} stop`, 0); hline(chart, s.tp1, '#26a69a', `${s.setup} TP1`, 0);
+  });
+  chart.chart.timeScale().fitContent();
+}
+
+function renderTabs() {
+  document.getElementById('tf-tabs').innerHTML = TFS.map(x => `<button class="${x === tf ? 'on' : ''}" data-tf="${x}">${x.toUpperCase()}</button>`).join('');
+  document.getElementById('layers').innerHTML = Object.entries(LAYERS).map(([k, v]) => `<button class="${on[k] ? 'on' : ''}" data-layer="${k}">${v}</button>`).join('');
+  document.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { tf = b.dataset.tf; renderTabs(); drawChart(); });
+  document.querySelectorAll('[data-layer]').forEach(b => b.onclick = () => { on[b.dataset.layer] = !on[b.dataset.layer]; renderTabs(); drawChart(); });
+}
+
+async function load() {
+  const d = await api(`/api/symbol/${SYM}`);
+  snap = d.snapshot; setups = d.setups;
+  if (!snap) { document.getElementById('title').textContent = SYM + ' — waiting for first scan'; return; }
+  document.title = `ICT Scanner — ${SYM}`;
+  document.getElementById('title').innerHTML = `${SYM} <span class="mono">${snap.price}</span> ${pill(snap.bias)} <span class="small muted">as of ${esc(snap.as_of_ny)} NY</span>`;
+  document.getElementById('narrative').innerHTML = snap.narrative.map(l => `<li>${esc(l)}</li>`).join('');
+  document.getElementById('tfs').innerHTML = TFS.map(x => tfCard(snap.timeframes[x])).join('');
+  document.getElementById('zones').innerHTML = '<tr><th>TF</th><th>Zone</th><th>Where</th><th>Strength</th><th>Criteria</th><th>Touches</th></tr>' +
+    snap.zones.map(z => `<tr><td>${z.tf.toUpperCase()}</td><td class="mono">${z.low} – ${z.high}</td><td>${z.position}</td><td>${z.strength}/5</td>
+      <td class="small">${Object.entries(z.criteria).map(([k, v]) => `<span class="${v ? 'ok' : 'na'}">${v ? '✓' : '·'}</span> ${k}`).join(' &nbsp; ')}</td><td>${z.touches}</td></tr>`).join('');
+  document.getElementById('setups').innerHTML = SETUP_HEAD + (setups.length ? setups.map(setupRow).join('') : '<tr><td colspan="7" class="muted">No setups in the last 7 days.</td></tr>');
+  renderTabs(); drawChart();
+}
+load(); setInterval(load, 60000);
+</script>
+</body></html>

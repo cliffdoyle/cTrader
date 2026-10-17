@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Notifications</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<main>
+  <h1>Notifications</h1>
+  <div class="tabs" id="filters"></div>
+  <div class="panel"><table id="list"></table></div>
+  <p class="small muted">Alerts (armed / limit / triggered) and results (target / stopped) pop up while any dashboard page is open.
+    Info items (watch, expired, missed, invalidated) only appear here. Notes from the first history backfill are pre-marked as read.</p>
+</main>
+<script src="/static/common.js"></script>
+<script>
+startShell();
+let filter = 'unread';
+const F = { unread: 'Unread', alerts: 'Alerts & results', all: 'All' };
+document.getElementById('filters').innerHTML = Object.entries(F).map(([k, v]) => `<button data-f="${k}">${v}</button>`).join('') + '<button class="btn" id="readall">Mark all read</button>';
+document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { filter = b.dataset.f; load(); });
+document.getElementById('readall').onclick = async () => { const r = await api('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setUnread(r.unread); load(); };
+
+async function openNote(id, sid) {
+  await api('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id] }) });
+  location.href = '/setup/' + encodeURIComponent(sid);
+}
+async function load() {
+  document.querySelectorAll('[data-f]').forEach(b => b.classList.toggle('on', b.dataset.f === filter));
+  const r = await api(`/api/notifications?limit=300${filter === 'unread' ? '&unread=true' : ''}`);
+  setUnread(r.unread);
+  const items = filter === 'alerts' ? r.items.filter(n => n.level !== 'info') : r.items;
+  document.getElementById('list').innerHTML = '<tr><th>When (NY)</th><th>Notification</th><th></th></tr>' + (items.length ? items.map(n =>
+    `<tr class="note-row ${n.read ? '' : 'unread'}"><td class="small">${ny(n.t)}</td><td><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></td>
+     <td><button class="btn" onclick="openNote(${n.id}, '${esc(n.setup_id)}')">Open</button></td></tr>`).join('') : '<tr><td colspan="3" class="muted">Nothing here.</td></tr>');
+}
+load(); setInterval(load, 30000);
+</script>
+</body></html>

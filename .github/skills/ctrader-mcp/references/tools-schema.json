@@ -1,0 +1,1433 @@
+[
+  {
+    "name": "get_balance",
+    "description": "Get current trading account information including balance, equity, margin, free margin, margin level, net profit, leverage, deposit asset, account type, broker name, and connection state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_accounts_list",
+    "description": "List all available trading accounts (login, broker, balance, currency, type, online status). Excludes hidden accounts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_account_statistics",
+    "description": "Get aggregated trading statistics: net profit, total trades, winning/losing trades, profit factor, and win rate.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "create_price_alert",
+    "description": "Create a price alert that triggers when a symbol's price crosses a threshold.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "price": {
+          "type": "number",
+          "description": "The price level to trigger the alert"
+        },
+        "condition": {
+          "type": "string",
+          "description": "Alert condition: 'above' or 'below'"
+        },
+        "quoteType": {
+          "type": "string",
+          "description": "Quote type: 'bid' (default) or 'ask'"
+        },
+        "message": {
+          "type": "string",
+          "description": "Optional alert message"
+        }
+      },
+      "required": [
+        "symbolName",
+        "price",
+        "condition"
+      ]
+    }
+  },
+  {
+    "name": "delete_price_alert",
+    "description": "Delete a price alert by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "alertId": {
+          "type": "integer",
+          "description": "The price alert ID to delete"
+        }
+      },
+      "required": [
+        "alertId"
+      ]
+    }
+  },
+  {
+    "name": "get_price_alerts",
+    "description": "Get all active price alerts with id, symbol, price, condition type, quote type, and message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "add_chart_object",
+    "description": "Add a drawing object to the active chart. Returns objectId for later deletion.\r\n\r\nIMPORTANT: All time values must be ISO 8601 UTC strings (e.g. '2024-01-15T10:00:00Z'). Two-point objects require BOTH a price AND a time for each point — a price alone is not enough to place the object on the chart.\r\n\r\nobject_type values and required parameters:\r\n  horizontal_line       - price1 (or 'price') — no time needed\r\n  vertical_line         - time1 (or 'time') — no price needed\r\n  trend_line, ray, arrow_line - price1+time1, price2+time2; extend? (bool)\r\n  equidistant_channel   - price1+time1, price2+time2\r\n  rectangle, ellipse    - price1+time1, price2+time2; fill? (bool)\r\n  triangle              - price1+time1, price2+time2, price3+time3; fill? (bool)\r\n  fibonacci_retracement, fibonacci_fan, fibonacci_timezones - price1+time1, price2+time2\r\n  fibonacci_expansion   - price1+time1, price2+time2, price3+time3\r\n  gann_fan, gann_box, gann_square, gann_square_fixed - price1+time1, price2+time2\r\n  andrews_pitchfork     - price1+time1, price2+time2, price3+time3\r\n  risk_reward           - side (buy/sell), price1=entry, price2=stop_loss, price3=take_profit, time1=block_start (required), time2=block_end (optional, defaults to time1)\r\n  text                  - price1+time1, text content\r\n  Markers (price1+time1): up_arrow, down_arrow, circle, square, diamond, star, up_triangle, down_triangle",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "object_type": {
+          "type": "string",
+          "description": "Type of drawing object (see tool description)"
+        },
+        "price1": {
+          "type": "number",
+          "description": "First price point (also accepted as 'price'). For risk_reward: entry price."
+        },
+        "time1": {
+          "type": "string",
+          "description": "First time point ISO 8601 UTC (also accepted as 'time'). Required for all two-point objects and risk_reward."
+        },
+        "price2": {
+          "type": "number",
+          "description": "Second price point. For risk_reward: stop loss price."
+        },
+        "time2": {
+          "type": "string",
+          "description": "Second time point ISO 8601 UTC. For risk_reward: block end time (optional, defaults to time1)."
+        },
+        "price3": {
+          "type": "number",
+          "description": "Third price point. For fibonacci_expansion/andrews_pitchfork/triangle: third anchor. For risk_reward: take profit price."
+        },
+        "time3": {
+          "type": "string",
+          "description": "Third time point ISO 8601 UTC (fibonacci_expansion, andrews_pitchfork, triangle)."
+        },
+        "color": {
+          "type": "string",
+          "description": "Color in hex format, e.g. '#FF0000'"
+        },
+        "fill": {
+          "type": "boolean",
+          "description": "Fill interior for rectangle/ellipse/triangle (default: false)"
+        },
+        "extend": {
+          "type": "boolean",
+          "description": "Extend to infinity for trend_line (default: false)"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text content for text objects"
+        },
+        "side": {
+          "type": "string",
+          "description": "Trade side for risk_reward: 'buy' or 'sell'"
+        }
+      },
+      "required": [
+        "object_type"
+      ]
+    }
+  },
+  {
+    "name": "apply_chart_template",
+    "description": "Apply a chart template by ID to the currently active chart.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "The template ID (from list_chart_templates)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "change_chart_symbol",
+    "description": "Change the symbol on the currently active chart.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        }
+      },
+      "required": [
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "change_chart_timeframe",
+    "description": "Change the timeframe on the currently active chart.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeframe": {
+          "type": "string",
+          "description": "Timeframe: m1, m5, m15, m30, h1, h4, d1, w1, month1"
+        }
+      },
+      "required": [
+        "timeframe"
+      ]
+    }
+  },
+  {
+    "name": "clear_chart_objects",
+    "description": "Delete all drawing objects from the active chart.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "close_chart",
+    "description": "Close a chart by its chart ID (from list_charts).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chartId": {
+          "type": "string",
+          "description": "The chart ID (from list_charts)"
+        }
+      },
+      "required": [
+        "chartId"
+      ]
+    }
+  },
+  {
+    "name": "delete_chart_object",
+    "description": "Delete a specific drawing object from the active chart by its objectId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "objectId": {
+          "type": "string",
+          "description": "The object ID to delete (from get_chart_objects or the add_chart_object response)"
+        }
+      },
+      "required": [
+        "objectId"
+      ]
+    }
+  },
+  {
+    "name": "delete_chart_template",
+    "description": "Delete a saved chart template by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "The template ID to delete (from list_chart_templates)"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "focus_chart",
+    "description": "Make a chart active/focused by its chart ID (from list_charts).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chartId": {
+          "type": "string",
+          "description": "The chart ID (from list_charts)"
+        }
+      },
+      "required": [
+        "chartId"
+      ]
+    }
+  },
+  {
+    "name": "get_active_chart",
+    "description": "Get information about the currently active chart (chartId, symbol and timeframe).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_chart_objects",
+    "description": "List all drawing objects on the active chart with their objectId, type, and name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_chart_viewport",
+    "description": "Get the active chart's scroll position and zoom level (visible bars count).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "list_charts",
+    "description": "List all open charts with their IDs, symbols, timeframes, and which is currently active.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "list_chart_templates",
+    "description": "List available custom chart templates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "open_chart",
+    "description": "Open a new chart tab for the given symbol, optionally with a timeframe.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "timeframe": {
+          "type": "string",
+          "description": "Optional timeframe: m1, m5, m15, m30, h1, h4, d1, w1, month1"
+        }
+      },
+      "required": [
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "save_chart_template",
+    "description": "Save the current active chart's settings as a named template.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The template name to save as"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "scroll_chart",
+    "description": "Scroll the active chart. Use startIndex for an absolute target or offsetBars for movement relative to the current start index.use maxStartIndex (from {McpConstants.Tools.Charts.GetChartViewport}) for the latest bars. The response includes the applied absolute startIndex.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "startIndex": {
+          "type": "integer",
+          "description": "Absolute chart start index (0 = oldest, maxStartIndex = most recent)"
+        },
+        "offsetBars": {
+          "type": "integer",
+          "description": "Relative number of bars to move from the current start index"
+        }
+      }
+    }
+  },
+  {
+    "name": "update_chart_object",
+    "description": "Update an existing drawing object on the active chart. Only provided fields are changed; omitted fields keep their current value.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "objectName": {
+          "type": "string",
+          "description": "The object name/ID to update (from get_chart_objects)"
+        },
+        "price1": {
+          "type": "number",
+          "description": "New first price point"
+        },
+        "time1": {
+          "type": "string",
+          "description": "New first time point ISO 8601 UTC"
+        },
+        "price2": {
+          "type": "number",
+          "description": "New second price point"
+        },
+        "time2": {
+          "type": "string",
+          "description": "New second time point ISO 8601 UTC"
+        },
+        "color": {
+          "type": "string",
+          "description": "New color in hex format, e.g. '#FF0000'"
+        },
+        "fill": {
+          "type": "boolean",
+          "description": "New fill state for rectangle, ellipse, and triangle"
+        },
+        "text": {
+          "type": "string",
+          "description": "New text content"
+        },
+        "lineThickness": {
+          "type": "integer",
+          "description": "New line thickness in pixels"
+        },
+        "lineStyle": {
+          "type": "string",
+          "description": "New line style: 'solid', 'dots', 'lines', 'lines_dots', 'dots_rare', 'dots_very_rare'"
+        }
+      },
+      "required": [
+        "objectName"
+      ]
+    }
+  },
+  {
+    "name": "zoom_chart",
+    "description": "Set the number of visible bars on the active chart (zoom level). Fewer bars = more zoomed in.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "visibleBars": {
+          "type": "integer",
+          "description": "Number of bars to display (e.g. 50 = zoomed in, 300 = zoomed out)"
+        }
+      },
+      "required": [
+        "visibleBars"
+      ]
+    }
+  },
+  {
+    "name": "get_server_time",
+    "description": "Get the current server time in UTC, local, and Unix milliseconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "addChartIndicator",
+    "description": "Add an indicator to the active chart by its type name (e.g. 'Simple Moving Average'). Use listChartIndicators to see what is already attached.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "typeName": {
+          "type": "string",
+          "description": "The indicator type name, e.g. 'Simple Moving Average', 'RSI', 'MACD'"
+        }
+      },
+      "required": [
+        "typeName"
+      ]
+    }
+  },
+  {
+    "name": "getIndicatorValues",
+    "description": "Get the most recent computed values from an indicator output line on the active chart.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "indicatorId": {
+          "type": "string",
+          "description": "The indicator ID (GUID)"
+        },
+        "outputIndex": {
+          "type": "integer",
+          "description": "Output line index (default 0 = first output)"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of recent values to return (default 10, max 1000)"
+        }
+      },
+      "required": [
+        "indicatorId"
+      ]
+    }
+  },
+  {
+    "name": "listAvailableIndicators",
+    "description": "List all available indicator types that can be added to a chart via addChartIndicator. Returns title and whether the indicator is an overlay (drawn on the main chart) or a separate panel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "listChartIndicators",
+    "description": "List all indicators currently attached to the active chart, with their indicatorId, typeName, and output names.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "removeChartIndicator",
+    "description": "Remove an indicator from the active chart by its indicatorId (from listChartIndicators).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "indicatorId": {
+          "type": "string",
+          "description": "The indicator ID (GUID) to remove"
+        }
+      },
+      "required": [
+        "indicatorId"
+      ]
+    }
+  },
+  {
+    "name": "update_indicator_parameters",
+    "description": "Update parameters of an indicator on the active chart by its indicatorId (from listChartIndicators). Pass parameters as a JSON object whose keys match the indicator's parameter names.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "indicatorId": {
+          "type": "string",
+          "description": "The indicator ID (GUID) to update"
+        },
+        "parameters": {
+          "type": "object",
+          "description": "JSON object of parameter name -> value pairs"
+        }
+      },
+      "required": [
+        "indicatorId",
+        "parameters"
+      ]
+    }
+  },
+  {
+    "name": "get_trendbars",
+    "description": "Get historical OHLC trend bars for a symbol and timeframe in a date range. Server caps each request at 1000 bars.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "timeframe": {
+          "type": "string",
+          "description": "Timeframe: m1, m5, m15, m30, h1, h4, d1, w1, month1"
+        },
+        "from": {
+          "type": "string",
+          "description": "Start timestamp (ISO 8601 UTC)"
+        },
+        "to": {
+          "type": "string",
+          "description": "End timestamp (ISO 8601 UTC)"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max bars to return (default 500, cap 1000)"
+        }
+      },
+      "required": [
+        "symbolName",
+        "timeframe",
+        "from",
+        "to"
+      ]
+    }
+  },
+  {
+    "name": "get_symbol_details",
+    "description": "Get detailed information about a trading symbol: digits, pip size, lot size, min/max volume, category, and current bid/ask.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD, GBPJPY, XAUUSD"
+        }
+      },
+      "required": [
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "get_symbols",
+    "description": "Get a list of available trading symbols. Optionally filter by name or description.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filter": {
+          "type": "string",
+          "description": "Optional filter string to search symbols by name or description"
+        }
+      }
+    }
+  },
+  {
+    "name": "get_spot_prices",
+    "description": "Get the current quote (bid, ask, spread, high, low, open) for a specific trading symbol.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD, GBPJPY, XAUUSD"
+        }
+      },
+      "required": [
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "get_symbol_sessions",
+    "description": "Get the trading sessions (open/close times) for a symbol along with its time zone.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        }
+      },
+      "required": [
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "get_news",
+    "description": "Get recent Fx news items (general or crypto) with title, summary, and publication date.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "feed": {
+          "type": "string",
+          "description": "Feed to read. Either 'general' or 'crypto'. Defaults to 'general'.",
+          "enum": [
+            "general",
+            "crypto"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of news items to return (default: 20)"
+        }
+      }
+    }
+  },
+  {
+    "name": "listPlugins",
+    "description": "List all available cBot plugins with their pluginId, name, and running status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "startPlugin",
+    "description": "Start a cBot plugin by its pluginId (from listPlugins).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "type": "string",
+          "description": "The plugin ID (GUID) to start"
+        }
+      },
+      "required": [
+        "pluginId"
+      ]
+    }
+  },
+  {
+    "name": "stopPlugin",
+    "description": "Stop a running cBot plugin by its pluginId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "type": "string",
+          "description": "The plugin ID (GUID) to stop"
+        }
+      },
+      "required": [
+        "pluginId"
+      ]
+    }
+  },
+  {
+    "name": "calculate_margin",
+    "description": "Calculate the expected margin required to open a position for a given symbol and volume.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Volume amount for margin calculation. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        }
+      },
+      "required": [
+        "symbolName",
+        "volume",
+        "volumeType"
+      ]
+    }
+  },
+  {
+    "name": "cancel_all_pending_orders",
+    "description": "Cancel all pending orders.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "cancel_order",
+    "description": "Cancel a pending order by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "integer",
+          "description": "The order ID to cancel"
+        }
+      },
+      "required": [
+        "orderId"
+      ]
+    }
+  },
+  {
+    "name": "close_all_positions",
+    "description": "Close all open positions, optionally filtered by symbol name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "Optional symbol filter — only close positions for this symbol"
+        }
+      }
+    }
+  },
+  {
+    "name": "close_position",
+    "description": "Close an open trading position by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "positionId": {
+          "type": "integer",
+          "description": "The position ID to close"
+        }
+      },
+      "required": [
+        "positionId"
+      ]
+    }
+  },
+  {
+    "name": "close_position_partial",
+    "description": "Partially close an open trading position by its ID, reducing its volume.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "positionId": {
+          "type": "integer",
+          "description": "The position ID to partially close"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Volume amount to close partially. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently. The resolved `volumeInUnits` must not exceed the position's current volume, which is also expressed in units. If the requested volume is invalid, do not retry with a guessed or automatically adjusted volume. Explain the valid constraints to the user and ask for a corrected volume. When suggesting alternatives, present them in the user's original `volumeType` and include the equivalent units value when useful."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        }
+      },
+      "required": [
+        "positionId",
+        "volume",
+        "volumeType"
+      ]
+    }
+  },
+  {
+    "name": "get_deals",
+    "description": "Get the most recent deals (executed orders), optionally filtered by symbol. Default count: 50, max: 200.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "Optional symbol filter, e.g. EURUSD"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of recent deals to return (default 50, max 200)"
+        }
+      }
+    }
+  },
+  {
+    "name": "get_pending_orders",
+    "description": "Get all pending orders with details: symbol, side, order type, volume (in units and lots), target price, current price, stop loss price (absolute) and pips, take profit price (absolute) and pips, expiration, label, and comment. All price fields are absolute prices; *Pips fields are distances in pips. `volumeInUnits` is the canonical volume; `volumeInLots = volumeInUnits / lotSize`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_positions",
+    "description": "Get all open trading positions with details: symbol, side, volume (in units and lots), entry price, current price, pips, profit, swap, commission, stop loss price (absolute) and pips, take profit price (absolute) and pips, open time, label, and comment. All price fields are absolute prices; *Pips fields are distances in pips. `volumeInUnits` is the canonical volume; `volumeInLots = volumeInUnits / lotSize`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_order_history",
+    "description": "Get closed trade history including symbol, side, volume, entry/close price, pips, profit, and timestamps. Returns trades currently loaded in the repository.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "amend_order",
+    "description": "Modify a pending order's entry price, volume, expiration, stop loss, or take profit.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "integer",
+          "description": "The pending order ID to modify"
+        },
+        "entryPrice": {
+          "type": "number",
+          "description": "New entry price. Omit to leave unchanged."
+        },
+        "volume": {
+          "type": "number",
+          "description": "New pending order volume amount. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently. Omit this field to leave the pending order volume unchanged. If the requested volume is invalid, do not retry with a guessed or automatically adjusted volume. Explain the valid constraints to the user and ask for a corrected volume. When suggesting alternatives, present them in the user's original `volumeType` and include the equivalent units value when useful."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        },
+        "expiration": {
+          "type": "string",
+          "description": "New expiration datetime (ISO 8601). Omit to leave unchanged; pass null to clear."
+        },
+        "stopLossPips": {
+          "type": "number",
+          "description": "New stop loss distance in pips. Omit to leave unchanged; pass null to clear."
+        },
+        "takeProfitPips": {
+          "type": "number",
+          "description": "New take profit distance in pips. Omit to leave unchanged; pass null to clear."
+        }
+      },
+      "required": [
+        "orderId"
+      ]
+    }
+  },
+  {
+    "name": "amend_position",
+    "description": "Modify the stop loss and/or take profit of an open position (prices, not pips).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "positionId": {
+          "type": "integer",
+          "description": "The position ID to modify"
+        },
+        "stopLoss": {
+          "type": "number",
+          "description": "New stop loss price (absolute). Omit to leave unchanged; pass null to clear."
+        },
+        "takeProfit": {
+          "type": "number",
+          "description": "New take profit price (absolute). Omit to leave unchanged; pass null to clear."
+        }
+      },
+      "required": [
+        "positionId"
+      ]
+    }
+  },
+  {
+    "name": "place_limit_order",
+    "description": "Place a limit order that executes when the price reaches the specified level.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "side": {
+          "type": "string",
+          "description": "Trade direction: 'buy' or 'sell'"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Order volume amount. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently. If the requested volume is invalid, do not retry with a guessed or automatically adjusted volume. Explain the valid constraints to the user and ask for a corrected volume. When suggesting alternatives, present them in the user's original `volumeType` and include the equivalent units value when useful."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        },
+        "limitPrice": {
+          "type": "number",
+          "description": "The limit price at which the order executes"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional order label"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional order comment"
+        },
+        "stopLossPips": {
+          "type": "number",
+          "description": "Optional stop loss distance in pips"
+        },
+        "takeProfitPips": {
+          "type": "number",
+          "description": "Optional take profit distance in pips"
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "Optional expiration datetime (ISO 8601)"
+        }
+      },
+      "required": [
+        "symbolName",
+        "side",
+        "volume",
+        "volumeType",
+        "limitPrice"
+      ]
+    }
+  },
+  {
+    "name": "place_market_order",
+    "description": "Place a market order to open a trading position immediately at the current market price.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "side": {
+          "type": "string",
+          "description": "Trade direction: 'buy' or 'sell'"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Order volume amount. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently. If the requested volume is invalid, do not retry with a guessed or automatically adjusted volume. Explain the valid constraints to the user and ask for a corrected volume. When suggesting alternatives, present them in the user's original `volumeType` and include the equivalent units value when useful."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional order label"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional order comment"
+        },
+        "stopLossPips": {
+          "type": "number",
+          "description": "Optional stop loss distance in pips"
+        },
+        "takeProfitPips": {
+          "type": "number",
+          "description": "Optional take profit distance in pips"
+        }
+      },
+      "required": [
+        "symbolName",
+        "side",
+        "volume",
+        "volumeType"
+      ]
+    }
+  },
+  {
+    "name": "place_stop_limit_order",
+    "description": "Place a stop-limit order that triggers at the stop price and then executes as a limit order at the limit price.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "side": {
+          "type": "string",
+          "description": "Trade direction: 'buy' or 'sell'"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Order volume amount. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently. If the requested volume is invalid, do not retry with a guessed or automatically adjusted volume. Explain the valid constraints to the user and ask for a corrected volume. When suggesting alternatives, present them in the user's original `volumeType` and include the equivalent units value when useful."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        },
+        "stopPrice": {
+          "type": "number",
+          "description": "The stop price at which the order triggers"
+        },
+        "limitPrice": {
+          "type": "number",
+          "description": "The limit price at which the triggered order executes"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional order label"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional order comment"
+        },
+        "stopLossPips": {
+          "type": "number",
+          "description": "Optional stop loss distance in pips"
+        },
+        "takeProfitPips": {
+          "type": "number",
+          "description": "Optional take profit distance in pips"
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "Optional expiration datetime (ISO 8601)"
+        },
+        "triggerMethod": {
+          "type": "string",
+          "description": "Trigger method: 'trade' (default) or 'opposite'"
+        }
+      },
+      "required": [
+        "symbolName",
+        "side",
+        "volume",
+        "volumeType",
+        "stopPrice",
+        "limitPrice"
+      ]
+    }
+  },
+  {
+    "name": "place_stop_order",
+    "description": "Place a stop order that executes when the price crosses the specified level.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol name, e.g. EURUSD"
+        },
+        "side": {
+          "type": "string",
+          "description": "Trade direction: 'buy' or 'sell'"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Order volume amount. `volume` is a positive decimal number. Its unit is defined by `volumeType`. Decimal/fractional values are allowed. Do not infer the unit from the numeric value. `volumeType` is required and must be either `lots` or `units`. `lots` means `volume` is expressed in lots and must be converted to units using the current symbol `lotSize`. `units` means `volume` is already expressed in units. If the user did not clearly specify lots or units, ask a clarification question before calling the tool. The requested volume must be resolved and validated against current symbol volume constraints before the operation. Read `lotSize`, `minVolume`, `maxVolume`, and `volumeStep` from get_symbol_details for the exact symbol. If `volumeType` is `lots`, compute `volumeInUnits = volume * lotSize`. If `volumeType` is `units`, use `volumeInUnits = volume`. `minVolume`, `maxVolume`, and `volumeStep` are always expressed in units. `volumeInUnits` must be within `[minVolume, maxVolume]` and must match the symbol's `volumeStep` grid. Use decimal-safe arithmetic. Do not round, clamp, snap, or otherwise change the requested volume silently. If the requested volume is invalid, do not retry with a guessed or automatically adjusted volume. Explain the valid constraints to the user and ask for a corrected volume. When suggesting alternatives, present them in the user's original `volumeType` and include the equivalent units value when useful."
+        },
+        "volumeType": {
+          "type": "string",
+          "description": "`volumeType` is required whenever `volume` is provided. If the user did not specify whether the amount is in lots or units, ask before calling the tool."
+        },
+        "stopPrice": {
+          "type": "number",
+          "description": "The stop price at which the order triggers"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional order label"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional order comment"
+        },
+        "stopLossPips": {
+          "type": "number",
+          "description": "Optional stop loss distance in pips"
+        },
+        "takeProfitPips": {
+          "type": "number",
+          "description": "Optional take profit distance in pips"
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "Optional expiration datetime (ISO 8601)"
+        },
+        "triggerMethod": {
+          "type": "string",
+          "description": "Trigger method: 'trade' (default) or 'opposite'"
+        }
+      },
+      "required": [
+        "symbolName",
+        "side",
+        "volume",
+        "volumeType",
+        "stopPrice"
+      ]
+    }
+  },
+  {
+    "name": "delete_workspace",
+    "description": "Delete a saved workspace by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The workspace name to delete"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "get_asp_tab",
+    "description": "Get the currently active tab in the Active Symbol Panel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_current_app",
+    "description": "Get the currently active application section: trade, automate, analyze, copy, or invite.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_layout_mode",
+    "description": "Get the current main window layout mode: all, asp, trade_watch, or chart_only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_market_watch_panel",
+    "description": "Get the currently active Market Watch panel: watchlists or all_symbols.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_trade_watch_tab",
+    "description": "Get the currently active tab in the TradeWatch panel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "list_workspaces",
+    "description": "List all saved workspaces (layout presets) by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "load_workspace",
+    "description": "Load a saved workspace by name, restoring the saved layout and charts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The workspace name (from list_workspaces)"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "save_workspace",
+    "description": "Save the current layout as a named workspace. Creates a new workspace or overwrites an existing one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The workspace name to save as"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "set_asp_tab",
+    "description": "Set the active tab in the Active Symbol Panel. Tabs: symbol, dom, calendar, news, autochartist.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab": {
+          "type": "string",
+          "description": "Tab name: 'symbol', 'dom', 'calendar', 'news', or 'autochartist'"
+        }
+      },
+      "required": [
+        "tab"
+      ]
+    }
+  },
+  {
+    "name": "set_layout_mode",
+    "description": "Set the main window layout mode to show/hide panels. Modes: 'all' (ASP + TradeWatch), 'asp' (ASP only), 'trade_watch' (TradeWatch only), 'chart_only' (charts only, no side panels).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Layout mode: 'all', 'asp', 'trade_watch', or 'chart_only'"
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    }
+  },
+  {
+    "name": "set_market_watch_panel",
+    "description": "Switch the active Market Watch panel to watchlists or all_symbols.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "panel": {
+          "type": "string",
+          "description": "Panel name: 'watchlists' or 'all_symbols'"
+        }
+      },
+      "required": [
+        "panel"
+      ]
+    }
+  },
+  {
+    "name": "set_trade_watch_tab",
+    "description": "Switch the active tab in the TradeWatch panel by tab name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabName": {
+          "type": "string",
+          "description": "The TradeWatch tab name to switch to. Use one of: positions, orders, history, price_alerts, transactions, journal",
+          "enum": [
+            "positions",
+            "orders",
+            "history",
+            "price_alerts",
+            "transactions",
+            "journal"
+          ]
+        }
+      },
+      "required": [
+        "tabName"
+      ]
+    }
+  },
+  {
+    "name": "show_notification",
+    "description": "Show an in-app popup notification with a caption, message, and type.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "caption": {
+          "type": "string",
+          "description": "Notification title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Notification body text"
+        },
+        "type": {
+          "type": "string",
+          "description": "Notification type: 'info' (default), 'success', 'error', 'progress'"
+        }
+      },
+      "required": [
+        "caption",
+        "description"
+      ]
+    }
+  },
+  {
+    "name": "switch_app",
+    "description": "Switch to a different application section: trade, automate, analyze, copy, or invite.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "App section: 'trade', 'automate', 'analyze', 'copy', or 'invite'"
+        }
+      },
+      "required": [
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "add_symbol_to_watchlist",
+    "description": "Add a symbol to a watchlist by watchlist name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "watchlistName": {
+          "type": "string",
+          "description": "The watchlist name"
+        },
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol to add, e.g. EURUSD"
+        }
+      },
+      "required": [
+        "watchlistName",
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "create_watchlist",
+    "description": "Create a new (empty) dynamic watchlist with the given name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The new watchlist name"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "delete_watchlist",
+    "description": "Delete a dynamic watchlist by its name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The watchlist name to delete"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "get_watchlists",
+    "description": "Get all watchlists with their names, keys, and the list of symbols in each watchlist.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "remove_symbol_from_watchlist",
+    "description": "Remove a symbol from a watchlist by watchlist name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "watchlistName": {
+          "type": "string",
+          "description": "The watchlist name"
+        },
+        "symbolName": {
+          "type": "string",
+          "description": "The symbol to remove, e.g. EURUSD"
+        }
+      },
+      "required": [
+        "watchlistName",
+        "symbolName"
+      ]
+    }
+  },
+  {
+    "name": "rename_watchlist",
+    "description": "Rename a dynamic watchlist.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The current watchlist name"
+        },
+        "newName": {
+          "type": "string",
+          "description": "The new watchlist name"
+        }
+      },
+      "required": [
+        "name",
+        "newName"
+      ]
+    }
+  }
+]
