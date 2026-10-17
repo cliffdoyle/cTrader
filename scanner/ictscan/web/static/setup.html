@@ -24,6 +24,8 @@
 startShell();
 const SID = decodeURIComponent(location.pathname.split('/').pop());
 let s, tf, chart;
+function btStat(x) { return x && x.trades ? `${x.trades} trades, ${x.win_rate}% wins, ${fmtR(x.avg_r)} avg, ${fmtR(x.total_r)} total` : 'no closed trades'; }
+function btLine(b) { return `<div class="small">${esc(s.setup)} all symbols: ${btStat(b.setup)}</div><div class="small">${esc(s.setup)} ${esc(s.symbol)}: ${btStat(b.setup_symbol)}</div><div class="small muted">${esc(b.period)} · <a href="/backtest">details</a></div>`; }
 const COLORS = { watch: '#58a6ff', armed: '#f0b429', limit: '#f0b429', triggered: '#a371f7', target: '#26a69a', stopped: '#ef5350', invalidated: '#8b98a8', expired: '#8b98a8', missed: '#8b98a8' };
 
 async function drawChart() {
@@ -58,7 +60,8 @@ async function load() {
   const rows = [['POI', `${esc(s.poi.kind)} <span class="mono">${s.poi.low} – ${s.poi.high}</span>`], ['Timeframes', `${s.poi_tf.toUpperCase()} → confirm ${s.confirm_tf.toUpperCase()}`],
     ['Entry', s.entry ?? '<span class="muted">waiting for confirmation</span>'], ['Stop', s.stop ?? '—'],
     ['TP1', s.tp1 != null ? `${s.tp1} <span class="small muted">${esc(s.tp1_name)}</span>` : '—'], ['TP2 (daily)', s.tp2 ?? '—'], ['TP3 (weekly)', s.tp3 ?? '—'],
-    ['R:R to TP1', s.rr != null ? s.rr + 'R' : '—'], ['Result', s.result_r != null ? `<span class="${s.result_r > 0 ? 'bull' : 'bear'}">${fmtR(s.result_r)}</span>` : '—']];
+    ['R:R to TP1', s.rr != null ? s.rr + 'R' : '—'], ['Result', s.result_r != null ? `<span class="${s.result_r > 0 ? 'bull' : 'bear'}">${fmtR(s.result_r)}</span>` : '—'],
+    ['Backtest record', s.backtest ? btLine(s.backtest) : '<span class="muted">no backtest yet — unvalidated</span>']];
   document.getElementById('plan').innerHTML = rows.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
   document.getElementById('checklist').innerHTML = s.checklist.map(c => `<div class="${c.ok === true ? 'ok' : c.ok === false ? 'no' : 'na'}">${c.ok === true ? '✓' : c.ok === false ? '✗' : '…'}</div><div><b>${esc(c.name)}</b> <span class="small muted">${esc(c.detail)}</span></div>`).join('');
   document.getElementById('timeline').innerHTML = '<tr><th>Stage</th><th>Time (NY)</th><th>Price</th><th>Note</th></tr>' +

@@ -55,6 +55,7 @@ def create_app(store, scanner=None):
         active = [s for s in store.setups(active_only=True, limit=200)]
         recent = [s for s in store.setups(limit=60) if s["stage"] not in ACTIVE][:30]
         return {"health": store.get_meta("health"), "unread": store.unread_count(), "symbols": rows,
+                "muted": store.get_meta("alerts_muted", False),
                 "active": [brief(s) for s in active], "recent": [brief(s) for s in recent]}
 
     @app.get("/api/symbol/{sym}")
@@ -72,16 +73,37 @@ def create_app(store, scanner=None):
             rows = [r for r in rows if r["t"] <= end][-n:]
         return [{"time": r["t"], "open": r["o"], "high": r["h"], "low": r["l"], "close": r["c"]} for r in rows]
 
+    @app.get("/backtest")
+    def backtest_page():
+        return page("backtest.html")
+
+    @app.get("/api/backtest")
+    def backtest(full: bool = False):
+        out = {}
+        for part in ("in-sample", "out-of-sample"):
+            rep = store.get_meta(f"backtest:{part}")
+            if rep and not full:
+                rep = {k: v for k, v in rep.items() if k != "trades"}
+            out[part] = rep
+        out["variants"] = store.get_meta("backtest_variants:in-sample", {})
+        return out
+
     @app.get("/api/setup/{sid}")
     def setup(sid: str):
         s = store.setup(sid)
         if not s:
             raise HTTPException(404, "unknown setup")
+        rep = store.get_meta("backtest:in-sample")
+        if rep:
+            s["backtest"] = {"setup": rep["by_setup"].get(s["setup"]),
+                             "setup_symbol": rep["by_setup_symbol"].get(f"{s['setup']} {s['symbol']}"),
+                             "period": f"{rep['from'][:10]} → {rep['to'][:10]} (in-sample)"}
         return s
 
     @app.get("/api/notifications")
     def notifications(after_id: int = 0, limit: int = 100, unread: bool = False):
-        return {"items": store.notifications(after_id, limit, unread), "unread": store.unread_count()}
+        return {"items": store.notifications(after_id, limit, unread), "unread": store.unread_count(),
+                "muted": store.get_meta("alerts_muted", False)}
 
     @app.post("/api/notifications/read")
     def mark_read(ids: list[int] | None = Body(default=None, embed=True)):

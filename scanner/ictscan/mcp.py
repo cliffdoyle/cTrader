@@ -57,9 +57,15 @@ class MCPClient:
 
     def connect(self):
         self.session = None
-        headers, body = self._post({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "ictscan", "version": "1.0"}}}, with_session=False)
+        try:
+            headers, body = self._post({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+                "protocolVersion": "2025-06-18", "capabilities": {},
+                "clientInfo": {"name": "ictscan", "version": "1.0"}}}, with_session=False)
+        except MCPError as e:
+            if not isinstance(e, MCPUnavailable) and str(e).startswith("HTTP 404"):
+                raise MCPUnavailable("cTrader's MCP server is not serving requests (HTTP 404). In cTrader: Settings → MCP server → "
+                                     "untick and re-tick 'Enable MCP server', or restart cTrader.") from e
+            raise
         sid = headers.get("Mcp-Session-Id")
         if not sid:
             raise MCPError("No Mcp-Session-Id returned; is 'Enable MCP server' on in cTrader?")

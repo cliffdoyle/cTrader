@@ -20,7 +20,8 @@ async function load() {
   const d = await api('/api/overview');
   setUnread(d.unread); setHealth(d.health);
   const h = d.health;
-  document.getElementById('banner').innerHTML = h && h.status !== 'ok' ? `<div class="banner ${esc(h.status)}"><b>${esc(h.status)}</b> — ${esc(h.message)}</div>` : '';
+  document.getElementById('banner').innerHTML = (h && h.status !== 'ok' ? `<div class="banner ${esc(h.status)}"><b>${esc(h.status)}</b> — ${esc(h.message)}</div>` : '') +
+    (d.muted ? '<div class="banner degraded"><b>Setup pop-ups are muted</b> — none of S1–S4 showed an edge in the backtest; research on a single mechanical strategy is in progress. Setups are still listed for study.</div>' : '');
   const count = {}; d.active.forEach(s => count[s.symbol] = (count[s.symbol] || 0) + 1);
   document.getElementById('grid').innerHTML = `<tr><th>Symbol</th><th>Price</th>${TFS.map(t => `<th>${t.toUpperCase()}</th>`).join('')}<th>4H position</th><th>Alignment</th><th>Active</th><th>Read</th></tr>` +
     d.symbols.map(r => r.missing ? `<tr><td>${r.symbol}</td><td colspan="11" class="muted">waiting for first scan…</td></tr>` :

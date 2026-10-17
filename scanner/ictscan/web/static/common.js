@@ -17,7 +17,7 @@ async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) t
 function renderHeader() {
   const h = document.createElement('header');
   h.innerHTML = `<span class="brand">ICT Scanner</span>
-    <nav><a href="/">Overview</a>${SYMBOLS.map(s => `<a href="/symbol/${s}">${s}</a>`).join('')}</nav>
+    <nav><a href="/">Overview</a>${SYMBOLS.map(s => `<a href="/symbol/${s}">${s}</a>`).join('')}<a href="/backtest">Backtest</a></nav>
     <span class="spacer"></span>
     <span id="health" class="small muted"></span>
     <button class="btn" id="notif-perm" style="display:none">Enable pop-ups</button>
@@ -54,7 +54,7 @@ async function pollNotifications() {
     const fresh = r.items.sort((a, b) => a.id - b.id);
     for (const n of fresh) {
       last = Math.max(last, n.id);
-      if (n.read || n.level === 'info') continue;
+      if (r.muted || n.read || n.level === 'info') continue;
       toast(n);
       if ('Notification' in window && Notification.permission === 'granted') {
         const bn = new Notification(n.title, { body: n.body, tag: `${n.setup_id}:${n.stage}` });

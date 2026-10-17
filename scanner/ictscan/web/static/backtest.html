@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Backtest</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<main>
+  <h1>Backtest</h1>
+  <div class="tabs" id="parts"></div>
+  <div id="body"><p class="muted">Loading…</p></div>
+</main>
+<script src="/static/common.js"></script>
+<script>
+startShell();
+let data, part = 'in-sample';
+const COLS = ['trades', 'wins', 'win_rate', 'avg_r', 'total_r', 'max_dd_r'];
+const HEAD = '<th>Trades</th><th>Wins</th><th>Win %</th><th>Avg R</th><th>Total R</th><th>Max DD (R)</th>';
+function cells(x) {
+  if (!x || !x.trades) return '<td colspan="6" class="muted">no closed trades</td>';
+  const c = v => v > 0 ? 'bull' : v < 0 ? 'bear' : '';
+  return `<td>${x.trades}</td><td>${x.wins}</td><td>${x.win_rate}</td><td class="${c(x.avg_r)}">${fmtR(x.avg_r)}</td><td class="${c(x.total_r)}">${fmtR(x.total_r)}</td><td class="bear">${x.max_dd_r}</td>`;
+}
+function table(title, obj, label = 'Group') {
+  return `<h2>${title}</h2><div class="panel"><table><tr><th>${label}</th>${HEAD}</tr>${Object.entries(obj).map(([k, v]) => `<tr><td>${esc(k)}</td>${cells(v)}</tr>`).join('')}</table></div>`;
+}
+function render() {
+  document.getElementById('parts').innerHTML = ['in-sample', 'out-of-sample'].map(p => `<button class="${p === part ? 'on' : ''}" data-p="${p}">${p}</button>`).join('');
+  document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { part = b.dataset.p; render(); });
+  const r = data[part];
+  const body = document.getElementById('body');
+  if (!r) { body.innerHTML = `<div class="panel muted">${part === 'out-of-sample' ? 'Not run yet. The last 20% of history is held back and run once, after the rules are final.' : 'No backtest yet.'}</div>`; return; }
+  const a = r.assumptions;
+  const vars = part === 'in-sample' ? Object.entries(data.variants || {}) : [];
+  const varTable = vars.length ? `<h2>Variants tested (same in-sample data)</h2><div class="panel"><table><tr><th>Variant</th><th>Settings</th><th>Setup</th>${HEAD}</tr>
+    ${vars.map(([name, v]) => [['All', v.overall], ...Object.entries(v.by_setup)].map(([k, x], i) =>
+      `<tr>${i === 0 ? `<td rowspan="${Object.keys(v.by_setup).length + 1}"><b>${esc(name)}</b></td><td rowspan="${Object.keys(v.by_setup).length + 1}" class="small">S1 stop: ${esc(v.params.s1_stop)}<br>S2 stop: ${esc(v.params.s2_stop)}<br>TP1: ${esc(v.params.tp_mode)}</td>` : ''}<td>${esc(k)}</td>${cells(x)}</tr>`).join('')).join('')}</table></div>` : '';
+  body.innerHTML = varTable + `<div class="panel"><div class="kv small"><div>Period</div><div>${esc(r.from.slice(0, 10))} → ${esc(r.to.slice(0, 10))} (${esc(r.part)}${r.label ? ', details below: ' + esc(r.label) : ''})</div>
+      <div>Costs / trade</div><div class="mono">${Object.entries(a.costs_price_units).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>
+      <div>Fills</div><div>${esc(a.fills)}</div><div>Replay</div><div>${esc(a.replay)}</div><div>Caveat</div><div>${esc(a.caveat)}</div></div>
+      <p class="small muted">R is net of costs. Small samples (under ~30 trades) can easily be luck — treat them as anecdotes.</p></div>
+    <h2>Overall</h2><div class="panel"><table><tr><th></th>${HEAD}</tr><tr><td>All setups</td>${cells(r.overall)}</tr></table></div>
+    ${table('By setup', r.by_setup, 'Setup')}
+    ${table('By setup and symbol', r.by_setup_symbol, 'Setup / symbol')}
+    ${table('By checklist score', r.by_score, 'Setup / score')}
+    ${table('S3 with vs against the 4H bias', r.s3_bias, 'S3')}
+    <h2>Does each checklist item help?</h2><div class="panel"><table><tr><th>Item</th><th>When</th>${HEAD}</tr>
+      ${Object.entries(r.checklist_effect).map(([k, v]) => `<tr><td rowspan="2">${esc(k)}</td><td class="ok">pass</td>${cells(v.pass)}</tr><tr><td class="no">fail</td>${cells(v.fail)}</tr>`).join('')}</table></div>
+    ${table('By month (exit)', r.by_month, 'Month')}
+    <h2>Funnel (how far setups got)</h2><div class="panel"><table><tr><th>Setup</th><th>Stages reached (final state)</th></tr>
+      ${Object.entries(r.funnel).map(([k, v]) => `<tr><td>${k}</td><td class="small">${Object.entries(v).map(([s, n]) => `${stage(s)} ${n}`).join(' &nbsp; ')}</td></tr>`).join('')}</table></div>
+    <h2>Example trades (check them on your chart)</h2><div class="panel"><table><tr><th>Setup</th><th>Dir</th><th>Triggered</th><th>Exit</th><th>Entry / Stop / TP1</th><th>Risk</th><th>Net R</th><th>Score</th></tr>
+      ${Object.values(r.examples).flat().map(t => `<tr><td>${esc(t.symbol)} ${esc(t.setup)}</td><td>${arrow(t.dir)}</td><td class="small">${esc(t.trigger_ny)} NY</td><td class="small">${esc(t.exit_ny)} NY</td>
+        <td class="mono small">${t.entry} / ${t.stop} / ${t.tp1}</td><td class="small">${t.risk_units}</td><td class="${t.net_r > 0 ? 'bull' : 'bear'}">${fmtR(t.net_r)}</td><td>${t.score}/7</td></tr>`).join('')}</table></div>`;
+}
+api('/api/backtest').then(d => { data = d; render(); });
+</script>
+</body></html>

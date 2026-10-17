@@ -25,3 +25,9 @@ The first ever scan backfills about 7 days of history and marks those notificati
 - `ictscan/data.py`, `mcp.py`, `store.py`, `runner.py` — data sync, cTrader client, SQLite, scan loop.
 - `ictscan/web/` — FastAPI app and static pages (Lightweight Charts by TradingView).
 - Tunable parameters: `ictscan/config.py`.
+
+## Status and research tools
+Backtests (`python -m ictscan.backtest fetch|run`) and an event study (`python -m ictscan.research events|analyze`) found no
+mechanical edge in setups S1–S4 on these six markets, so setup pop-ups are muted and the dashboard is used as a top-down
+analysis tool. Results are on the dashboard's Backtest page and in `%LOCALAPPDATA%\ictscan` (`backtest-*.json`,
+`research-analysis.txt`). The validation (2026-06-17 → 2026-09-11) and sealed (→ 2026-10-17) periods are still unused.

@@ -41,6 +41,11 @@ PARAMS = {
     "s4_max_gap_atr": 1.0,
     "s4_expiry_hours": 120,
     "setup_lookback_days": 7,
+    # Variants under test (backtest); defaults = spec v0.2
+    "s1_stop": "leg",          # leg = confirmation-TF leg extreme | ob_far = beyond the order block's far edge
+    "s2_stop": "sweep",        # sweep = beyond the M5 sweep extreme | protected = beyond the H1 protected level
+    "tp_mode": "liquidity",    # liquidity = nearest opposing liquidity | fixed_2r = 2 × risk
+    "enabled_setups": ["S1", "S2", "S3", "S4"],
 }
 
 DATA_DIR = Path(os.environ.get("ICTSCAN_DATA", Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ictscan"))

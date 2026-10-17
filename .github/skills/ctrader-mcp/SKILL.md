@@ -53,4 +53,4 @@ ConvertTo-NewYorkTime $bars.bars[0].timestamp
 Whenever you discover something new about this server—a new tool, a parameter quirk, an error, a symbol name, a limit, or a completed stage—append a dated line to [findings.md](./references/findings.md) under the right heading before finishing the turn. If `tools/list` changes, regenerate [tools.md](./references/tools.md) and [tools-schema.json](./references/tools-schema.json). Never store session ids, tokens or account credentials.
 
 ## Current state
-See **Progress checkpoints** in [findings.md](./references/findings.md). As of 2026-10-17 the live scanner and dashboard are running locally (alerts unvalidated); next: backtest, then phone access via the droplet.
+See **Progress checkpoints** in [findings.md](./references/findings.md). As of 2026-10-17 the scanner runs locally as a top-down analysis dashboard. Backtest and event study found no mechanical edge in S1–S4 or in ~3000 ICT filter combinations; the user stopped the search and setup pop-ups are muted. Research tools: `python -m ictscan.backtest` and `python -m ictscan.research` (see findings.md).

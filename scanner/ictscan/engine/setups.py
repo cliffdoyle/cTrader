@@ -44,11 +44,12 @@ def stage(s, name, t, note, price=None):
 def set_targets(ctx, s, tfs, t):
     d, entry, stop = s["dir"], s["entry"], s["stop"]
     risk = abs(entry - stop)
-    lv = ctx.nearest_target(tfs, d, entry, t)
+    lv = None if ctx.p.get("tp_mode") == "fixed_2r" else ctx.nearest_target(tfs, d, entry, t)
     if lv is not None:
         s["tp1"], s["tp1_name"] = ctx.fmt(lv.price), lv.name
     else:
-        s["tp1"], s["tp1_name"] = ctx.fmt(entry + 2 * risk if _bull(d) else entry - 2 * risk), "2R (no liquidity found)"
+        s["tp1"] = ctx.fmt(entry + 2 * risk if _bull(d) else entry - 2 * risk)
+        s["tp1_name"] = "fixed 2R" if ctx.p.get("tp_mode") == "fixed_2r" else "2R (no liquidity found)"
     beyond = s["tp1"]
     z2 = ctx.zone_target("d1", d, beyond)
     z3 = ctx.zone_target("w1", d, beyond)
@@ -81,7 +82,7 @@ def run_limit(ctx, s, ready_t, expire_t, invalid_t=None):
         if invalid_t is not None and b.end > invalid_t:
             stage(s, "invalidated", invalid_t, "Zone closed through before the limit filled")
             return
-        filled = b.l <= entry if _bull(d) else b.h >= entry
+        filled = b.l < entry if _bull(d) else b.h > entry  # spec §7: price must trade beyond the limit
         if not filled and (b.h >= tp if _bull(d) else b.l <= tp):
             stage(s, "missed", b.end, "TP1 traded before the limit filled")
             return
@@ -214,10 +215,16 @@ def detect_s1(ctx, since):
             be = cb[trig.j].end
             buf = ctx.cfg["buffer"]
             s["entry"] = ctx.fmt(trig.close)
-            s["stop"] = ctx.fmt(trig.prot - buf if _bull(d) else trig.prot + buf)
+            if p.get("s1_stop") == "ob_far":
+                s["stop"] = ctx.fmt(ob.low - buf if _bull(d) else ob.high + buf)
+            else:
+                s["stop"] = ctx.fmt(trig.prot - buf if _bull(d) else trig.prot + buf)
+            if (s["entry"] <= s["stop"]) if _bull(d) else (s["entry"] >= s["stop"]):
+                continue
             set_targets(ctx, s, [poi_tf], be)
+            stop_desc = "beyond the order block's far edge" if p.get("s1_stop") == "ob_far" else f"beyond the {conf_tf.upper()} leg extreme {ctx.fmt(trig.prot)}"
             s["reasons"].append(f"{conf_tf.upper()} CHoCH {d} on the {ny(cb[trig.j].t)} candle: close {ctx.fmt(trig.close)} beyond {ctx.fmt(trig.level)}; "
-                                f"stop beyond the {conf_tf.upper()} leg extreme {ctx.fmt(trig.prot)}.")
+                                f"stop {stop_desc}.")
             stage(s, "triggered", be, f"{conf_tf.upper()} CHoCH confirmed; entry at candle close", s["entry"])
             checklist(ctx, s, be, (True, "order block in the correct half"),
                       _swept_between(ctx, conf_tf, "low" if _bull(d) else "high", ob.tap_t, be))
@@ -291,10 +298,15 @@ def detect_s2(ctx, since):
         sw = min(hits, key=lambda x: x.t)
         buf = ctx.cfg["buffer"]
         s["entry"] = ctx.fmt(m5[sw.k].c)
-        s["stop"] = ctx.fmt(sw.extreme - buf if _bull(d) else sw.extreme + buf)
+        if ctx.p.get("s2_stop") == "protected":
+            s["stop"] = ctx.fmt(e.prot - buf if _bull(d) else e.prot + buf)
+            stop_desc = f"beyond the H1 protected {'low' if _bull(d) else 'high'} {ctx.fmt(e.prot)}"
+        else:
+            s["stop"] = ctx.fmt(sw.extreme - buf if _bull(d) else sw.extreme + buf)
+            stop_desc = f"beyond the sweep extreme {ctx.fmt(sw.extreme)}"
         j = ctx.idx("h1", sw.t)
         tp = st.ext[j] if st.state[j] == d else leg_ext
-        if (tp > s["entry"]) if _bull(d) else (tp < s["entry"]):
+        if ctx.p.get("tp_mode") != "fixed_2r" and ((tp > s["entry"]) if _bull(d) else (tp < s["entry"])):
             risk = abs(s["entry"] - s["stop"])
             s["tp1"], s["tp1_name"] = ctx.fmt(tp), "H1 range extreme (recent swing)"
             s["rr"] = round(abs(tp - s["entry"]) / risk, 2) if risk else None
@@ -304,7 +316,7 @@ def detect_s2(ctx, since):
         else:
             set_targets(ctx, s, ["h1"], sw.t)
         s["reasons"].append(f"M5 {sw.kind} sweep of {sw.level.name} {ctx.fmt(sw.level.price)} inside the FVG on the {ny(sw.bar_t)} candle; "
-                            f"stop beyond the sweep extreme {ctx.fmt(sw.extreme)}.")
+                            f"stop {stop_desc}.")
         stage(s, "triggered", sw.t, "M5 liquidity sweep inside the FVG; entry at candle close", s["entry"])
         checklist(ctx, s, sw.t, (True, "FVG midpoint in the correct half"),
                   (True, f"{sw.level.name} {ctx.fmt(sw.level.price)} swept ({sw.kind})"))
@@ -434,7 +446,9 @@ def detect_s4(ctx, since):
 
 def detect_all(ctx):
     since = ctx.now - timedelta(days=ctx.p["setup_lookback_days"])
+    enabled = set(ctx.p.get("enabled_setups", ["S1", "S2", "S3", "S4"]))
     out = []
-    for fn in (detect_s1, detect_s2, detect_s3, detect_s4):
-        out.extend(fn(ctx, since))
+    for name, fn in (("S1", detect_s1), ("S2", detect_s2), ("S3", detect_s3), ("S4", detect_s4)):
+        if name in enabled:
+            out.extend(fn(ctx, since))
     return out
