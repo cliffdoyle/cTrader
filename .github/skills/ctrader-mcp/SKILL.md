@@ -6,7 +6,9 @@ argument-hint: 'What to do with cTrader (e.g. "fetch H4 GBPJPY", "continue Stage
 
 # cTrader MCP (local)
 
-Quick access to everything verified about the user's local cTrader MCP server, plus the rules for using it. The analysis workflow itself lives in [prompt.md](../../../prompt.md). The scanner strategy being built is **top-down market structure (W/D levels → 4H/1H structure, BOS/CHoCH, OBs, FVGs, liquidity → 15m/5m confirmation)**, from two Smart Risk videos summarised in [strategy-top-down.md](./references/strategy-top-down.md) and [strategy-3-setups.md](./references/strategy-3-setups.md). SMT divergence was dropped by the user (2026-10-17) — do not use it. The exact rules live in [strategy-spec.md](./references/strategy-spec.md) (draft v0.1, awaiting approval) — it overrides the video notes where they differ.
+Quick access to everything verified about the user's local cTrader MCP server, plus the rules for using it. The analysis workflow itself lives in [prompt.md](../../../prompt.md). The scanner strategy being built is **top-down market structure (W/D levels → 4H/1H structure, BOS/CHoCH, OBs, FVGs, liquidity → 15m/5m confirmation)**, from two Smart Risk videos summarised in [strategy-top-down.md](./references/strategy-top-down.md) and [strategy-3-setups.md](./references/strategy-3-setups.md). SMT divergence was dropped by the user (2026-10-17) — do not use it. The exact rules live in [strategy-spec.md](./references/strategy-spec.md) (v0.2, approved) — it overrides the video notes where they differ.
+
+**The live scanner** is built in [scanner/](../../../scanner/README.md): Python engine + FastAPI dashboard on http://127.0.0.1:8765, data from this MCP server, SQLite in `%LOCALAPPDATA%\ictscan`, auto-started by the Task Scheduler task "ICT Scanner". Change rules in `scanner/ictscan/engine/`, parameters in `scanner/ictscan/config.py`; restart with `Stop-ScheduledTask "ICT Scanner"; Start-ScheduledTask "ICT Scanner"`.
 
 ## Hard safety rules
 1. READ AND DRAW ONLY. Never call tools marked **BLOCKED** in [tools.md](./references/tools.md) (orders, positions, cBots, `clear_chart_objects`). If a task needs one, stop and tell the user.
@@ -51,4 +53,4 @@ ConvertTo-NewYorkTime $bars.bars[0].timestamp
 Whenever you discover something new about this server—a new tool, a parameter quirk, an error, a symbol name, a limit, or a completed stage—append a dated line to [findings.md](./references/findings.md) under the right heading before finishing the turn. If `tools/list` changes, regenerate [tools.md](./references/tools.md) and [tools-schema.json](./references/tools-schema.json). Never store session ids, tokens or account credentials.
 
 ## Current state
-See **Progress checkpoints** in [findings.md](./references/findings.md). As of 2026-10-17, Stages 1–3 are complete (no live setups); Stage 4 only after the user says "go to Stage 4".
+See **Progress checkpoints** in [findings.md](./references/findings.md). As of 2026-10-17 the live scanner and dashboard are running locally (alerts unvalidated); next: backtest, then phone access via the droplet.

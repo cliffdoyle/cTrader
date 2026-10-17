@@ -1,4 +1,4 @@
-# Scanner strategy spec — DRAFT v0.1 (2026-10-17, awaiting user approval)
+# Scanner strategy spec — v0.2 (approved 2026-10-17; see §8 for build clarifications)
 
 Top-down market structure from the Smart Risk videos ([strategy-top-down.md](./strategy-top-down.md), [strategy-3-setups.md](./strategy-3-setups.md)). No SMT, no session filter. All times America/New_York. All "close beyond" rules use candle **closes**; wicks never break structure.
 Parameters marked ⚙ are starting values to be tuned by visual checks and the backtest, never by eye on live charts.
@@ -105,3 +105,12 @@ Alerts show "x/7" plus the setup's backtest record (trades, win rate, average R)
 - Costs: measured typical spread per symbol + commission (stated per run). Limit orders fill only if price trades through the limit by ≥ 1 tick.
 - If stop and target fall in the same candle, the stop is assumed (conservative); drill down to M1 when available.
 - 12 months of data; the most recent 20% kept as a one-time out-of-sample test. Report trades, win rate, average R, max drawdown, results by month, by setup and by symbol, and example trades with NY times for chart checking. Warn on small samples.
+
+## 8. Implementation notes (v0.2, as built in `scanner/`, 2026-10-17)
+- Approved by the user as v0.1; these clarifications were made while coding.
+- CHoCH happens **only** on a close beyond the protected level (video 2). Breaking a minor swing inside the trend is not a CHoCH.
+- Order block: when a breaking leg has several displacement candles, the **earliest** is used.
+- S2 "FVG filled" invalidation = an H1 **close** through the FVG's far edge (a wick sweep through it is the trigger, not an invalidation).
+- W/D zones: a cluster never spans more than 2 × tolerance (stops zones chaining into very wide areas).
+- Event descriptions use the candle **open** time (as on cTrader charts); stage times are the deciding candle's close.
+- Stop buffer per symbol is a fixed estimate in `config.py` until live spreads are measured.

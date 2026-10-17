@@ -168,7 +168,7 @@ def detect_s1(ctx, since):
                 "range": {k: ctx.fmt(v) for k, v in rng.items() if k != "state"}})
             ev = ob.event
             s["reasons"] = [
-                f"{poi_tf.upper()} {ev.kind} {d} at {ny(ctx.bars[poi_tf][ev.j].end)}: close {ctx.fmt(ev.close)} beyond {ctx.fmt(ev.level)}.",
+                f"{poi_tf.upper()} {ev.kind} {d} on the {ny(ctx.bars[poi_tf][ev.j].t)} candle: close {ctx.fmt(ev.close)} beyond {ctx.fmt(ev.level)}.",
                 f"Order block = displacement candle of {ny(ctx.bars[poi_tf][ob.i].t)} ({ctx.fmt(ob.low)}–{ctx.fmt(ob.high)}), "
                 f"in {'discount' if _bull(d) else 'premium'} of the {poi_tf.upper()} range {ctx.fmt(rng['low'])}–{ctx.fmt(rng['high'])} (50% {ctx.fmt(rng['mid'])}).",
                 f"H4 bias {d}. Waiting for price to tap the block and a {conf_tf.upper()} CHoCH {d}.",
@@ -216,7 +216,7 @@ def detect_s1(ctx, since):
             s["entry"] = ctx.fmt(trig.close)
             s["stop"] = ctx.fmt(trig.prot - buf if _bull(d) else trig.prot + buf)
             set_targets(ctx, s, [poi_tf], be)
-            s["reasons"].append(f"{conf_tf.upper()} CHoCH {d} at {ny(be)}: close {ctx.fmt(trig.close)} beyond {ctx.fmt(trig.level)}; "
+            s["reasons"].append(f"{conf_tf.upper()} CHoCH {d} on the {ny(cb[trig.j].t)} candle: close {ctx.fmt(trig.close)} beyond {ctx.fmt(trig.level)}; "
                                 f"stop beyond the {conf_tf.upper()} leg extreme {ctx.fmt(trig.prot)}.")
             stage(s, "triggered", be, f"{conf_tf.upper()} CHoCH confirmed; entry at candle close", s["entry"])
             checklist(ctx, s, be, (True, "order block in the correct half"),
@@ -257,7 +257,7 @@ def detect_s2(ctx, since):
             "low": ctx.fmt(f.low), "high": ctx.fmt(f.high), "formed": formed_t.isoformat(),
             "candle": hb[f.i].t.isoformat(), "range": {"low": ctx.fmt(lo), "high": ctx.fmt(hi), "mid": ctx.fmt(mid)}})
         s["reasons"] = [
-            f"H1 {e.kind} {d} at {ny(et)} (close {ctx.fmt(e.close)} beyond {ctx.fmt(e.level)}); protected {'low' if _bull(d) else 'high'} {ctx.fmt(e.prot)}.",
+            f"H1 {e.kind} {d} on the {ny(hb[e.j].t)} candle (close {ctx.fmt(e.close)} beyond {ctx.fmt(e.level)}); protected {'low' if _bull(d) else 'high'} {ctx.fmt(e.prot)}.",
             f"H1 FVG {ctx.fmt(f.low)}–{ctx.fmt(f.high)} sits in {'discount' if _bull(d) else 'premium'} of the leg {ctx.fmt(lo)}–{ctx.fmt(hi)} (50% {ctx.fmt(mid)}).",
             f"H4 bias {d}. Waiting for price to enter the FVG and an M5 {'sell' if _bull(d) else 'buy'}-side sweep inside it.",
         ]
@@ -303,7 +303,7 @@ def detect_s2(ctx, since):
             s["tp3"] = ctx.fmt(z3["low"] if _bull(d) else z3["high"]) if z3 else None
         else:
             set_targets(ctx, s, ["h1"], sw.t)
-        s["reasons"].append(f"M5 {sw.kind} sweep of {sw.level.name} {ctx.fmt(sw.level.price)} inside the FVG at {ny(sw.bar_t)}; "
+        s["reasons"].append(f"M5 {sw.kind} sweep of {sw.level.name} {ctx.fmt(sw.level.price)} inside the FVG on the {ny(sw.bar_t)} candle; "
                             f"stop beyond the sweep extreme {ctx.fmt(sw.extreme)}.")
         stage(s, "triggered", sw.t, "M5 liquidity sweep inside the FVG; entry at candle close", s["entry"])
         checklist(ctx, s, sw.t, (True, "FVG midpoint in the correct half"),
@@ -331,7 +331,7 @@ def detect_s3(ctx, since):
             "low": ctx.fmt(min(sw.level.price, extreme)), "high": ctx.fmt(max(sw.level.price, extreme)),
             "formed": sw.t.isoformat(), "candle": sw.bar_t.isoformat()})
         s["reasons"] = [
-            f"H1 {sw.kind} sweep of {'buy' if side == 'high' else 'sell'}-side liquidity ({names}) at {ny(sw.bar_t)}; "
+            f"H1 {sw.kind} sweep of {'buy' if side == 'high' else 'sell'}-side liquidity ({names}) on the {ny(sw.bar_t)} candle; "
             f"extreme {ctx.fmt(extreme)}, closed back inside.",
             f"Looking for an M5 BOS/CHoCH {d} with an FVG in the breaking leg within {p['s3_window_h1_bars']}h.",
         ]
@@ -370,7 +370,7 @@ def detect_s3(ctx, since):
         poi_ok = (None, "no H1 dealing range") if not rng else (
             (entry < rng["mid"]) if _bull(d) else (entry > rng["mid"]),
             f"entry {ctx.fmt(entry)} vs H1 50% {ctx.fmt(rng['mid'])}")
-        s["reasons"].append(f"M5 {e.kind} {d} at {ny(m5[e.j].end)} (close {ctx.fmt(e.close)} beyond {ctx.fmt(e.level)}); "
+        s["reasons"].append(f"M5 {e.kind} {d} on the {ny(m5[e.j].t)} candle (close {ctx.fmt(e.close)} beyond {ctx.fmt(e.level)}); "
                             f"M5 FVG {ctx.fmt(f.low)}–{ctx.fmt(f.high)}: limit at its near edge {s['entry']}.")
         stage(s, "limit", ready_t, f"Limit {'buy' if _bull(d) else 'sell'} at {s['entry']} (M5 FVG near edge)", s["entry"])
         checklist(ctx, s, ready_t, poi_ok, (True, f"{names} swept ({sw.kind})"))

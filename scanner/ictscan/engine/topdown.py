@@ -11,7 +11,7 @@ def tf_summary(ctx, tf):
     bars, st = ctx.bars[tf], ctx.st[tf]
     j = len(bars) - 1
     rng = dealing_range(st, j)
-    events = [{"kind": e.kind, "dir": e.dir, "t": bars[e.j].end.isoformat(), "ny": ny(bars[e.j].end),
+    events = [{"kind": e.kind, "dir": e.dir, "t": bars[e.j].end.isoformat(), "ny": ny(bars[e.j].t) + " candle",
                "level": ctx.fmt(e.level), "close": ctx.fmt(e.close), "prot": ctx.fmt(e.prot),
                "ref_t": bars[e.ref_i].t.isoformat(), "break_t": bars[e.j].t.isoformat()} for e in st.events[-4:]]
     out = {"tf": tf, "label": TF_LABEL[tf], "state": st.state[j], "events": events,
@@ -51,7 +51,7 @@ def narrative(ctx, tfs):
         last = h4["events"][-1] if h4["events"] else None
         txt = f"4H bias is {h4['state']}"
         if last:
-            txt += f" since the {last['kind']} at {last['ny']} (close {last['close']} beyond {last['level']})"
+            txt += f" since the {last['kind']} on the {last['ny']} (close {last['close']} beyond {last['level']})"
         txt += f"; protected level {h4['protected']}."
         if h4["position"]:
             txt += f" Price sits at {h4['position']['pct']}% of the 4H range ({h4['position']['zone']})."

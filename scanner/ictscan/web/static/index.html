@@ -28,7 +28,7 @@ async function load() {
        ${TFS.map(t => `<td>${pill(r.states[t])}</td>`).join('')}
        <td>${r.h4_position ? `${r.h4_position.pct}% <span class="small muted">${r.h4_position.zone}</span>` : '—'}</td>
        <td>${r.aligned && r.bias !== 'undefined' ? '<span class="ok">A-grade</span>' : '<span class="muted">pullback</span>'}</td>
-       <td>${count[r.symbol] || 0}</td><td class="small">${esc(r.narrative[r.narrative.length - 1] || '')}</td></tr>`).join('');
+       <td>${count[r.symbol] || 0}</td><td class="small read">${esc(r.narrative[r.narrative.length - 1] || '')}</td></tr>`).join('');
   document.getElementById('active').innerHTML = SETUP_HEAD + (d.active.length ? d.active.map(setupRow).join('') : '<tr><td colspan="7" class="muted">No active setups.</td></tr>');
   document.getElementById('recent').innerHTML = SETUP_HEAD + (d.recent.length ? d.recent.map(setupRow).join('') : '<tr><td colspan="7" class="muted">None yet.</td></tr>');
 }

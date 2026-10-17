@@ -38,6 +38,12 @@ Append new verified facts here (newest at the bottom of each section). Include t
 - 2026-10-17: All six watchlist names exist exactly: NAS100, US30, XAUUSD ("Default Category"), EURUSD, GBPUSD (FX Majors), GBPJPY (FX Crosses). Variants `NAS100-F`, `US30-F` (Indices) and `XAUUSD-F` (Metals) also exist — NOT used; ask before switching.
 - 2026-10-17: Other symbols that exist on the broker (not on the watchlist; ask before using): `US500` (also `US500-F`), `US2000`, `GER40`, `XAGUSD`, `EURJPY`, `USDX` (dollar index; no `DXY`).
 
+## Live scanner (built 2026-10-17)
+- 2026-10-17: User dropped the Open API for now ("start ASAP"): the scanner reads from this desktop MCP server on this PC. Data source is isolated in `scanner/ictscan/data.py` + `mcp.py` so the Open API can replace it later. User wants notifications **on the dashboard** (no Telegram) and a dashboard showing the top-down analysis and the reason for each setup.
+- 2026-10-17: Auto-start: Task Scheduler task "ICT Scanner" (at logon + 10-min watchdog, `pythonw -m ictscan`, venv `%LOCALAPPDATA%\ictscan\venv`); `Pepperstone cTrader.lnk` copied to the user's Startup folder. Restart test passed (resumes from SQLite, no duplicate notifications).
+- 2026-10-17: Performance via MCP: first full sync ~37k candles in ~43 s; later scans 8–23 s for 6 symbols × 6 TFs. W1 bars open Sunday 21:00Z, so the current week counts as "forming" until Sunday; D1 bars open 21:00Z.
+- 2026-10-17: Validated by hand against raw candles: GBPJPY S3 short (H1 10:00 NY candle swept 210.876/210.899, M5 FVG 210.738–210.788, limit filled 12:25) and EURUSD S1 long (entry = M5 CHoCH candle close 1.12282). In-sample last 7 days (not a backtest): S3 50 closed, 21 wins, +10.7R; S1 8 closed, 0 wins; S2 2 closed, 0 wins — S1's stop (M5 leg extreme) looks tight; check in the backtest.
+
 ## Progress checkpoints
 - 2026-10-17: Step 0 complete. Five EURUSD H1 candles fetched (16 Oct 2026, 12:00–16:00 NY); one cyan rectangle `MCP_Rectangle_3e302c036b3c4f098f8d1cdc6eb07985` drawn on chart `077739a8-3fdd-4a11-bb00-d4fa73e9cce3` (EURUSD H1), price 1.12126–1.12404, 12:00–17:00 NY. User confirmed placement visually. Stage 1 not started.
 - 2026-10-17: Stage 1 complete (data to Fri 16 Oct close). Scores: US30 3 (bearish), GBPJPY 3 (bullish), EURUSD 2, GBPUSD 2, NAS100 1, XAUUSD 0. Only US30 and GBPJPY reach the ≥3 cutoff. Computed with [ict_analysis.py](../scripts/ict_analysis.py). Awaiting user go-ahead and interpretation choices before Stage 2.

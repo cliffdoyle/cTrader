@@ -47,7 +47,7 @@ async function drawChart() {
   data = await api(`/api/bars/${SYM}/${tf}?n=400`);
   chart.series.setData(data); clearOverlays(chart);
   const t = snap.timeframes[tf];
-  if (on.zones) snap.zones.forEach(z => zone(chart, z.low, z.high, z.tf === 'w1' ? '#a371f7' : '#d29922', `${z.tf.toUpperCase()} key ${z.strength}/5`));
+  if (on.zones) snap.zones.slice(0, 4).forEach(z => zone(chart, z.low, z.high, z.tf === 'w1' ? '#a371f7' : '#d29922', `${z.tf.toUpperCase()} key ${z.strength}/5`));
   if (on.structure) {
     hline(chart, t.protected, '#58a6ff', `${tf.toUpperCase()} protected`, 0, 2);
     if (t.range) hline(chart, t.range.mid, '#8b98a8', `${tf.toUpperCase()} 50%`, 3);
