@@ -17,6 +17,7 @@ import difflib
 import json
 import logging
 import os
+import queue
 import threading
 import time
 import urllib.error
@@ -50,8 +51,9 @@ TRENDBARS, TRENDBARS_RES = 2137, 2138
 ERROR_RES, COMMON_ERROR = 2142, 50
 TOKEN_INVALIDATED, CLIENT_DISCONNECT = 2147, 2148
 ACCOUNTS, ACCOUNTS_RES = 2149, 2150
+SUB_SPOTS, SUB_SPOTS_RES, SPOT_EVENT = 2127, 2128, 2131
 HEARTBEAT = 51
-ALLOWED_REQUESTS = {APP_AUTH, ACC_AUTH, SYMBOLS_REQ, TRENDBARS, ACCOUNTS, HEARTBEAT}
+ALLOWED_REQUESTS = {APP_AUTH, ACC_AUTH, SYMBOLS_REQ, TRENDBARS, ACCOUNTS, SUB_SPOTS, HEARTBEAT}
 HIST_SPACING = 0.25  # historical-data requests are rate limited (5/s); stay under it
 TOKEN_ERRORS = ("TOKEN", "OA_AUTH", "ACCOUNT_NOT_AUTHORIZED")
 
@@ -165,11 +167,21 @@ class OpenAPIClient:
         self.account_id = None
         self.is_live = None
         self.symbols = {}
+        self.names = {}
         self.info = {}
         self.send_lock = threading.Lock()
+        self.conn_lock = threading.RLock()
         self.hb_stop = threading.Event()
         self.last_hist = 0.0
         self.reconnect_requested = False
+        self.pending = {}
+        self.pending_lock = threading.Lock()
+        self.broken = None
+        self.quotes = {}          # symbol → {"bid", "ask", "t"} from live spot events
+        self.live_bars = {}       # symbol → forming M5 bar built from spot bids
+        self.quote_lock = threading.Lock()
+        self.spot_symbols = set()
+        self.subscribed = set()
 
     # --- transport ---
     def _open(self, live):
@@ -181,10 +193,13 @@ class OpenAPIClient:
             self.ws = None
             raise MCPUnavailable(f"cTrader Open API not reachable at {url}: {e}") from e
         self.is_live = live
+        self.broken = None
+        threading.Thread(target=self._reader, args=(self.ws,), name="openapi-reader", daemon=True).start()
 
     def close(self):
         self.hb_stop.set()
         ws, self.ws = self.ws, None
+        self.subscribed = set()
         if ws is not None:
             try:
                 ws.close()
@@ -195,10 +210,79 @@ class OpenAPIClient:
         """Called from another thread (e.g. after new tokens were saved): reconnect before the next request."""
         self.reconnect_requested = True
 
-    def _send(self, pt, payload):
+    @property
+    def alive(self):
+        return self.ws is not None and self.broken is None
+
+    def _fail_pending(self, err):
+        with self.pending_lock:
+            waiting, self.pending = self.pending, {}
+        for q in waiting.values():
+            q.put(err)
+
+    def _reader(self, ws):
+        """Only reader of the socket: routes replies to the waiting request and keeps live quotes."""
+        while True:
+            try:
+                raw = ws.recv()
+            except Exception as e:  # noqa: BLE001 — any socket failure ends this connection
+                if ws is self.ws:
+                    self.broken = MCPUnavailable(f"Open API connection lost: {e}")
+                    self._fail_pending(self.broken)
+                return
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue
+            t, p = msg.get("payloadType"), msg.get("payload") or {}
+            if t == HEARTBEAT:
+                continue
+            if t == SPOT_EVENT:
+                self._on_spot(p)
+                continue
+            if t in (CLIENT_DISCONNECT, TOKEN_INVALIDATED):
+                err = (MCPUnavailable(f"Open API closed the connection: {p.get('reason', '')}") if t == CLIENT_DISCONNECT
+                       else OpenAPIError("ACCESS_TOKEN_INVALIDATED", p.get("reason", "")))
+                self.broken = err
+                self._fail_pending(err)
+                continue
+            with self.pending_lock:
+                q = self.pending.pop(msg.get("clientMsgId"), None)
+            if q is not None:
+                q.put(msg)
+
+    def _on_spot(self, p):
+        name = self.names.get(int(p.get("symbolId", 0)))
+        if not name:
+            return
+        digits = SYMBOLS.get(name, {}).get("digits", 5)
+        ts = p.get("timestamp")
+        now = datetime.fromtimestamp(int(ts) / 1000, timezone.utc) if ts else datetime.now(timezone.utc)
+        with self.quote_lock:
+            q = self.quotes.setdefault(name, {"bid": None, "ask": None, "t": None})
+            if p.get("bid") is not None:
+                q["bid"] = _price(p["bid"], digits)
+            if p.get("ask") is not None:
+                q["ask"] = _price(p["ask"], digits)
+            q["t"] = now.isoformat()
+            if q["bid"] is None:
+                return
+            start = int(now.timestamp()) // 300 * 300
+            bar = self.live_bars.get(name)
+            if bar is None or bar["time"] != start:
+                self.live_bars[name] = {"time": start, "open": q["bid"], "high": q["bid"], "low": q["bid"], "close": q["bid"]}
+            else:
+                bar["high"], bar["low"], bar["close"] = max(bar["high"], q["bid"]), min(bar["low"], q["bid"]), q["bid"]
+
+    def live(self):
+        """Copy of the latest quotes and forming M5 bars (empty when no spot data has arrived)."""
+        with self.quote_lock:
+            return {s: {**q, "bar": dict(self.live_bars[s]) if s in self.live_bars else None} for s, q in self.quotes.items()}
+
+    def _send(self, pt, payload, mid=None):
         if pt not in ALLOWED_REQUESTS:
             raise MCPError(f"Refused: payload type {pt} is not a read-only request")
-        mid = uuid.uuid4().hex[:16]
+        mid = mid or uuid.uuid4().hex[:16]
         try:
             with self.send_lock:
                 self.ws.send(json.dumps({"clientMsgId": mid, "payloadType": pt, "payload": payload}))
@@ -207,33 +291,28 @@ class OpenAPIClient:
         return mid
 
     def _rpc(self, pt, payload, expect):
-        mid = self._send(pt, payload)
-        deadline = time.time() + self.timeout
-        while True:
-            left = deadline - time.time()
-            if left <= 0:
-                raise MCPUnavailable(f"Open API: no response to payload {pt} within {self.timeout}s")
+        if self.broken is not None:
+            raise self.broken
+        mid, q = uuid.uuid4().hex[:16], queue.Queue(maxsize=1)
+        with self.pending_lock:
+            self.pending[mid] = q
+        try:
+            self._send(pt, payload, mid)
             try:
-                raw = self.ws.recv(timeout=left)
-            except TimeoutError as e:
+                msg = q.get(timeout=self.timeout)
+            except queue.Empty as e:
                 raise MCPUnavailable(f"Open API: no response to payload {pt} within {self.timeout}s") from e
-            except (OSError, WebSocketException) as e:
-                raise MCPUnavailable(f"Open API connection lost: {e}") from e
-            msg = json.loads(raw)
-            t, p = msg.get("payloadType"), msg.get("payload") or {}
-            if t == HEARTBEAT:
-                continue
-            if t == CLIENT_DISCONNECT:
-                raise MCPUnavailable(f"Open API closed the connection: {p.get('reason', '')}")
-            if t == TOKEN_INVALIDATED:
-                raise OpenAPIError("ACCESS_TOKEN_INVALIDATED", p.get("reason", ""))
-            if msg.get("clientMsgId") != mid:
-                continue
-            if t in (ERROR_RES, COMMON_ERROR):
-                raise OpenAPIError(p.get("errorCode"), p.get("description", ""), p.get("retryAfter"))
-            if t != expect:
-                raise MCPError(f"Open API: expected payload {expect}, got {t}")
-            return p
+        finally:
+            with self.pending_lock:
+                self.pending.pop(mid, None)
+        if isinstance(msg, Exception):
+            raise msg
+        t, p = msg.get("payloadType"), msg.get("payload") or {}
+        if t in (ERROR_RES, COMMON_ERROR):
+            raise OpenAPIError(p.get("errorCode"), p.get("description", ""), p.get("retryAfter"))
+        if t != expect:
+            raise MCPError(f"Open API: expected payload {expect}, got {t}")
+        return p
 
     def _heartbeat(self, stop):
         while not stop.wait(10):
@@ -256,6 +335,10 @@ class OpenAPIClient:
             return self._rpc(ACCOUNTS, {"accessToken": self.creds.access_token}, ACCOUNTS_RES)
 
     def connect(self):
+        with self.conn_lock:
+            self._connect()
+
+    def _connect(self):
         self.close()
         self.reconnect_requested = False
         c = self.creds
@@ -289,11 +372,37 @@ class OpenAPIClient:
             self.close()
             raise
         self.symbols = {s["symbolName"]: int(s["symbolId"]) for s in syms.get("symbol", []) if s.get("symbolName")}
+        self.names = {v: k for k, v in self.symbols.items()}
         self.info = {"account": acc.get("traderLogin"), "live": bool(acc.get("isLive")), "broker": acc.get("brokerTitleShort"),
                      "scope": res.get("permissionScope"), "symbols": len(self.symbols)}
         log.info("Open API connected: %s", self.info)
         self.hb_stop = threading.Event()
         threading.Thread(target=self._heartbeat, args=(self.hb_stop,), name="openapi-heartbeat", daemon=True).start()
+        if self.spot_symbols:
+            self._subscribe(self.spot_symbols)
+
+    # --- live quotes ---
+    def _subscribe(self, symbols):
+        todo = [s for s in symbols if s in self.symbols and s not in self.subscribed]
+        if not todo:
+            return
+        try:
+            self._rpc(SUB_SPOTS, {"ctidTraderAccountId": self.account_id, "symbolId": [self.symbols[s] for s in todo],
+                                  "subscribeToSpotTimestamp": True}, SUB_SPOTS_RES)
+        except OpenAPIError as e:
+            if "ALREADY" not in e.code:
+                raise
+        self.subscribed.update(todo)
+        log.info("Live quotes subscribed: %s", ", ".join(todo))
+
+    def ensure_live(self, symbols):
+        """Keep a connection with spot subscriptions for `symbols` (called every few seconds by the live keeper)."""
+        with self.conn_lock:
+            self.spot_symbols = set(symbols)
+            if not self.alive or self.reconnect_requested:
+                self.connect()
+            else:
+                self._subscribe(self.spot_symbols)
 
     # --- data ---
     def _hist(self, payload):
@@ -357,7 +466,7 @@ class OpenAPIClient:
         end = datetime.fromisoformat(args["to"].replace("Z", "+00:00"))
         for attempt in (1, 2):
             try:
-                if self.ws is None or self.reconnect_requested:
+                if not self.alive or self.reconnect_requested:
                     self.connect()
                 return {"bars": self.trendbars(args["symbolName"], args["timeframe"], start, end), "truncated": False}
             except OpenAPIError as e:
