@@ -67,6 +67,8 @@ is the buy logic on price-mirrored series), dashboard records `engine/mmxm_live.
 FVG); MMXM alerts pop up while S1–S4 stay muted (`ALERT_SETUPS`). Backtest (Oct 2025 – Oct 2026, costs included):
 as specified swing +0.93R/trade (113 trades, but only +0.2R without the 3 best) and intraday −0.25R (428 trades); the
 swing version with the stop beyond the reversal extreme was the only one positive in both halves after capping outliers.
+The dashboard shows only NAS100/US30/US500 and only MMXM signals (`DASHBOARD_SYMBOLS` / `DASHBOARD_SETUPS` in
+`config.py`; set them to `()` to show everything again — all symbols are still scanned).
 
 ## Today's key levels and daily lean
 `engine/session.py` adds, for every symbol, the current New York trading day's (rolls at 17:00 NY) key levels — PWH/PWL,
