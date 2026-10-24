@@ -6,6 +6,9 @@
   <div id="banner"></div>
   <div class="idx-grid" id="indices"></div>
 
+  <div class="section-head"><h2>New York session plan</h2><span class="count" id="plan-sub"></span></div>
+  <div class="plan-grid" id="plans"></div>
+
   <div class="section-head"><h2>Live signals</h2><span class="count" id="live-count"></span></div>
   <div id="live"></div>
 
@@ -32,13 +35,46 @@ function indexCard(r, nActive) {
   return `<a class="idx-card ${esc(r.bias)}" href="/symbol/${r.symbol}">
     <div class="idx-head"><div><div class="idx-name">${esc(r.symbol)}</div><div class="idx-sub">${esc(NAMES[r.symbol] || '')}</div></div>
       <div style="text-align:right">${pill(r.bias)}<div class="tiny dim" style="margin-top:4px">4H bias${r.aligned ? ' · 1H aligned' : ''}</div></div></div>
-    <div class="idx-price mono">${r.price}</div><div class="tiny dim">as of ${esc(r.as_of_ny)} NY</div>
+    <div class="idx-price mono" id="px-${r.symbol}">${r.price}</div><div class="tiny dim">as of ${esc(r.as_of_ny)} NY</div>
     <div class="tfrow">${tf}</div>${liq}
     <div class="idx-foot">${lean}<span>${nActive ? `<b class="bull">${nActive} live signal${nActive > 1 ? 's' : ''}</b>` : 'no live signal'}</span></div>
   </a>`;
 }
 
 function statCard(k, v, sub, cls) { return `<div class="stat"><div class="k">${k}</div><div class="v ${cls || ''}">${v}</div><div class="s">${sub || ''}</div></div>`; }
+
+function countdown(iso) {
+  const s = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+}
+function planStatus(p) {
+  const w = p.windows || [], first = w[0], cur = w.find(x => x.status === 'now');
+  if (p.session === 'before' && first) return `starts ${first.label} NY · in <b data-cd="${first.start}">${countdown(first.start)}</b>`;
+  if (cur) return `<b class="bull">live</b> · ${cur.label} window · next in <b data-cd="${cur.end}">${countdown(cur.end)}</b>`;
+  return 'session closed';
+}
+function planCard(sym, p) {
+  if (!p || p.error) return `<div class="plan-card"><b>${sym}</b><div class="muted small">${esc(p ? p.error : 'no plan yet')}</div></div>`;
+  const day = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(p.day + 'T12:00:00'));
+  const wins = p.windows.map(w => `<div class="win ${w.status}" title="${esc(w.note)}"><span>${w.label}</span>${
+    w.high != null ? `<i class="mono">${w.high}</i><i class="mono">${w.low}</i>` : `<i class="dim">${w.status === 'next' ? '—' : ''}</i>`}</div>`).join('');
+  const lst = (xs, sign) => xs.length ? xs.map(x => `<div><span>${esc(x.name)}</span><span class="mono">${x.price}</span><span class="mono dim">${sign}${x.dist}</span></div>`).join('')
+    : '<div class="dim">none nearby</div>';
+  const scn = p.scenarios.map(s => `<div class="scn ${s.side} ${s.rank}">
+      <div class="scn-h">${s.side === 'sell' ? '▼' : '▲'} ${esc(s.title)} <span class="chip">${esc(s.rank)}</span></div>
+      <div><b>If</b> ${esc(s.if)}</div><div><b>Then</b> ${esc(s.then)}</div><div class="dim tiny">Invalid: ${esc(s.invalid)}</div></div>`).join('');
+  const votes = p.votes.map(v => `<li class="${v.vote > 0 ? 'bull' : 'bear'}">${v.vote > 0 ? '▲' : '▼'} ${esc(v.why)}</li>`).join('');
+  const leanCls = p.lean === 'two-sided' ? 'mixed' : p.lean;
+  return `<div class="plan-card ${esc(leanCls)}">
+    <div class="plan-head"><b>${sym}</b><span class="pill ${esc(leanCls)}">${esc(p.lean)}</span><span class="right small muted">${day} · <span class="pstat">${planStatus(p)}</span></span></div>
+    <div class="win-row">${wins}</div>
+    <div class="liq2"><div><div class="k">Buy-side above</div>${lst(p.above, '+')}</div><div><div class="k">Sell-side below</div>${lst(p.below, '−')}</div></div>
+    ${scn}
+    <details class="why"><summary>Why ${esc(p.lean)}? (${p.votes.length} inputs, score ${p.score > 0 ? '+' : ''}${p.score})</summary><ul class="tight small">${votes}</ul>
+      <div class="tiny dim">${esc(p.evidence)}</div></details>
+  </div>`;
+}
 
 function renderStats(st) {
   const a = st.all || {}, sw = st.swing || {}, it = st.intraday || {};
@@ -58,12 +94,28 @@ async function load() {
   document.getElementById('banner').innerHTML = h && h.status !== 'ok' ? `<div class="banner ${esc(h.status)}"><b>${esc(h.status)}</b> — ${esc(h.message)}</div>` : '';
   const count = {}; d.active.forEach(s => count[s.symbol] = (count[s.symbol] || 0) + 1);
   document.getElementById('indices').innerHTML = d.symbols.map(r => indexCard(r, count[r.symbol] || 0)).join('');
+  const plans = d.symbols.filter(r => !r.missing);
+  document.getElementById('plans').innerHTML = plans.map(r => planCard(r.symbol, r.nyplan)).join('');
+  const p0 = plans.find(r => r.nyplan && !r.nyplan.error);
+  document.getElementById('plan-sub').textContent = p0 ? 'scenarios for the six 90-minute windows · rebuilt every 5 minutes' : '';
   document.getElementById('live-count').textContent = d.active.length ? `${d.active.length} active` : '';
   document.getElementById('live').innerHTML = d.active.length ? `<div class="sig-grid">${d.active.map(signalCard).join('')}</div>`
     : `<div class="empty"><div class="big">◇</div>No live signals right now.<div class="small dim">The scanner checks NAS100, US30 and US500 every 5 minutes and alerts you when a market maker model completes.</div></div>`;
   renderStats(d.stats || {});
   document.getElementById('recent').innerHTML = RESULT_HEAD + (d.recent.length ? d.recent.map(resultRow).join('') : '<tr><td colspan="7" class="muted">No closed signals yet.</td></tr>');
+  applyLive(LIVE);
 }
-load(); setInterval(load, 30000);
+const lastPx = {};
+function applyLive(live) {
+  document.querySelectorAll('[data-cd]').forEach(el => el.textContent = countdown(el.dataset.cd));
+  for (const [sym, q] of Object.entries(live)) {
+    if (q.price == null) continue;
+    const v = q.price.toFixed(DIGITS[sym] ?? 2);
+    flash(document.getElementById('px-' + sym), v, lastPx[sym]);
+    lastPx[sym] = v;
+  }
+  updateSignalLive(live);
+}
+load(); setInterval(load, 30000); startLive(applyLive);
 </script>
 </body></html>

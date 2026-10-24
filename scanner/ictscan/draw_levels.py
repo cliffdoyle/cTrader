@@ -1,9 +1,10 @@
 """Draw today's session key levels on the ACTIVE cTrader chart (desktop app, MCP). Usage from the scanner folder:
-    python -m ictscan.draw_levels NAS100
-Draws untouched PWH/PWL, PDH/PDL, Asia, London and NY AM highs/lows plus the midnight open, each as a line from where the
-level formed with a short label, and a one-line lean note. Before drawing it removes only the objects it drew last time
-(ids kept in DATA_DIR/drawn-levels-<SYMBOL>.json, all MCP_ objects); other drawings are never touched. Taken levels are
-not drawn (they are listed on the dashboard).
+    python -m ictscan.draw_levels NAS100 [--untouched-only]
+Draws PWH/PWL, PDH/PDL, Asia, London and NY AM highs/lows plus the midnight open, each with a short label. Untouched
+levels are solid/dashed lines extending to the right; levels already swept are thin dotted segments that stop at the
+candle that took them, labelled "swept HH:MM" (NY) — omit them with --untouched-only. Before drawing it removes only the
+objects it drew last time (ids kept in DATA_DIR/drawn-levels-<SYMBOL>.json, all MCP_ objects); other drawings are never
+touched.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ def iso(t):
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def main(symbol):
+def main(symbol, untouched_only=False):
     if symbol not in SYMBOLS:
         raise SystemExit(f"Unknown symbol {symbol}; known: {', '.join(SYMBOLS)}")
     client, store = MCPClient(MCP_ENDPOINT), Store(DB_PATH)
@@ -72,16 +73,23 @@ def main(symbol):
 
     pad = ctx.atr["h1"][-1] * 0.12
     drawn = []
+    from .engine.session import NY as _NY
     for lv in kl["levels"]:
-        if not lv["untouched"]:
+        if not lv["untouched"] and untouched_only:
             continue
         tag = next(k for k in COLORS if lv["name"].startswith(k))
         color = COLORS[tag]
-        add({"object_type": "trend_line", "price1": lv["price"], "time1": iso(lv["formed_t"]), "price2": lv["price"],
-             "time2": iso(ctx.now), "color": color, "extend": True}, thick=2, style="solid" if tag in ("PW", "PD") else "lines")
-        add({"object_type": "text", "price1": lv["price"] + (pad if lv["side"] == "high" else -pad), "time1": iso(lv["formed_t"]),
-             "color": color, "text": f"{lv['name']} {ctx.fmt(lv['price'])}"})
-        drawn.append(lv["name"])
+        label = f"{lv['name']} {ctx.fmt(lv['price'])}"
+        if lv["untouched"]:
+            add({"object_type": "trend_line", "price1": lv["price"], "time1": iso(lv["formed_t"]), "price2": lv["price"],
+                 "time2": iso(ctx.now), "color": color, "extend": True}, thick=2, style="solid" if tag in ("PW", "PD") else "lines")
+        else:  # swept: a thin dotted segment that stops at the candle that took it
+            add({"object_type": "trend_line", "price1": lv["price"], "time1": iso(lv["formed_t"]), "price2": lv["price"],
+                 "time2": iso(lv["taken_t"]), "color": color, "extend": False}, thick=1, style="dots")
+            label += f" swept {lv['taken_t'].astimezone(_NY):%H:%M}"
+        add({"object_type": "text", "price1": ctx.fmt(lv["price"] + (pad if lv["side"] == "high" else -pad)),
+             "time1": iso(lv["formed_t"]), "color": color, "text": label})
+        drawn.append(lv["name"] + ("" if lv["untouched"] else " (swept)"))
     mo = kl["opens"].get("midnight")
     if mo is not None:
         from .engine.session import ny_time, trading_day
@@ -101,4 +109,5 @@ def main(symbol):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "NAS100")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    main(args[0] if args else "NAS100", untouched_only="--untouched-only" in sys.argv)

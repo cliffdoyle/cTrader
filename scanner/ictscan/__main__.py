@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 
 import uvicorn
 
-from .config import DATA_DIR, DB_PATH, LOG_PATH, WEB_HOST, WEB_PORT
+from .config import DASHBOARD_SYMBOLS, DATA_DIR, DB_PATH, LOG_PATH, SYMBOLS, WEB_HOST, WEB_PORT
 from .runner import Scanner
 from .store import Store
 from .web.app import create_app
@@ -31,6 +31,7 @@ def main():
     store = Store(DB_PATH)
     scanner = Scanner(store)
     threading.Thread(target=scanner.run_forever, name="scanner", daemon=True).start()
+    threading.Thread(target=scanner.run_live, args=(DASHBOARD_SYMBOLS or tuple(SYMBOLS),), name="live", daemon=True).start()
     log.info("Dashboard on http://%s:%s (data in %s)", WEB_HOST, WEB_PORT, DATA_DIR)
     uvicorn.run(create_app(store, scanner), host=WEB_HOST, port=WEB_PORT, log_level="warning", log_config=None)
 

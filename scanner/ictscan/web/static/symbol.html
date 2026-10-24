@@ -109,7 +109,7 @@ async function load() {
   snap = d.snapshot; setups = d.setups;
   if (!snap) { document.getElementById('title').textContent = SYM + ' — waiting for first scan'; return; }
   document.title = `ICT Scanner — ${SYM}`;
-  document.getElementById('title').innerHTML = `${SYM} <span class="mono">${snap.price}</span> ${pill(snap.bias)} <span class="small muted">as of ${esc(snap.as_of_ny)} NY</span>`;
+  document.getElementById('title').innerHTML = `${SYM} <span class="mono" id="title-px">${snap.price}</span> ${pill(snap.bias)} <span class="small muted">as of ${esc(snap.as_of_ny)} NY</span>`;
   document.getElementById('narrative').innerHTML = snap.narrative.map(l => `<li>${esc(l)}</li>`).join('');
   renderSession(snap.session);
   document.getElementById('tfs').innerHTML = TFS.map(x => tfCard(snap.timeframes[x])).join('');
@@ -121,5 +121,14 @@ async function load() {
   renderTabs(); drawChart();
 }
 load(); setInterval(load, 60000);
+let lastTitle = null;
+startLive(live => {
+  const q = live[SYM];
+  if (!q || q.price == null) return;
+  const v = q.price.toFixed(DIGITS[SYM] ?? 2);
+  flash(document.getElementById('title-px'), v, lastTitle); lastTitle = v;
+  const bar = q.bars && q.bars[tf];
+  if (chart && bar && data.length && bar.time >= data[data.length - 1].time) chart.series.update(bar);
+});
 </script>
 </body></html>

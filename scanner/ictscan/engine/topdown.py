@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .core import dealing_range
 from .cycles import cycle_summary
+from .nyplan import ny_plan
 from .session import session_summary
 from .setups import ny
 
@@ -83,11 +84,15 @@ def topdown(ctx):
         cyc = cycle_summary(ctx.bars, ctx.now, ctx.price, ctx.fmt)
     except Exception as e:  # noqa: BLE001
         cyc = {"error": str(e)}
+    try:
+        plan = ny_plan(ctx, sess if "error" not in sess else None, cyc if "error" not in cyc else None)
+    except Exception as e:  # noqa: BLE001
+        plan = {"error": str(e)}
     return {
         "symbol": ctx.symbol, "price": ctx.fmt(ctx.price), "as_of": ctx.now.isoformat(), "as_of_ny": ny(ctx.now),
         "bias": tfs["h4"]["state"], "aligned": tfs["h1"]["state"] == tfs["h4"]["state"],
         "zones": [{**z, "low": ctx.fmt(z["low"]), "high": ctx.fmt(z["high"]), "mid": ctx.fmt(z["mid"]),
                    "distance": ctx.fmt(z["distance"])} for z in ctx.zones[:8]],
-        "timeframes": tfs, "narrative": narrative(ctx, tfs), "session": sess, "cycles": cyc,
+        "timeframes": tfs, "narrative": narrative(ctx, tfs), "session": sess, "cycles": cyc, "nyplan": plan,
         "unit": ctx.cfg["unit"], "pip": ctx.cfg["pip"],
     }

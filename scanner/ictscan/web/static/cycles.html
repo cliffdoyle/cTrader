@@ -112,8 +112,10 @@ function seg(times, price, color, width, style, title) {
   extra.push(s);
 }
 
+let chartBars = [], chartTf = null;
 async function drawChart() {
   const d = await api(`/api/cycles/${sym}?kind=${kind}&n=8`);
+  chartBars = d.bars; chartTf = d.tf;
   if (!chart) chart = makeChart(document.getElementById('chart'), d.digits ?? DIGITS[sym]);
   chart.series.applyOptions({ priceFormat: { type: 'price', precision: d.digits, minMove: Math.pow(10, -d.digits) } });
   extra.forEach(s => chart.chart.removeSeries(s)); extra = [];
@@ -148,5 +150,17 @@ async function drawChart() {
 
 async function load() { overview = await api('/api/overview'); setUnread(overview.unread); setHealth(overview.health); renderAll(); }
 renderTabs(); load().then(drawChart); setInterval(load, 60000);
+let lastCyclePx = {};
+startLive(live => {
+  if (!overview) return;
+  let changed = false;
+  for (const r of overview.symbols) {
+    const q = live[r.symbol];
+    if (q && q.price != null && q.price !== lastCyclePx[r.symbol]) { r.price = q.price; lastCyclePx[r.symbol] = q.price; changed = true; }
+  }
+  if (changed) renderAll();
+  const q = live[sym], bar = q && q.bars && q.bars[chartTf];
+  if (chart && bar && chartBars.length && bar.time >= chartBars[chartBars.length - 1].time) chart.series.update(bar);
+});
 </script>
 </body></html>

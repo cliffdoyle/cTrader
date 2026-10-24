@@ -395,12 +395,20 @@ class OpenAPIClient:
         self.subscribed.update(todo)
         log.info("Live quotes subscribed: %s", ", ".join(todo))
 
+    def ensure_connected(self):
+        """Connect if needed. Double-checked under the lock so concurrent threads open only one connection."""
+        if self.alive and not self.reconnect_requested:
+            return
+        with self.conn_lock:
+            if not self.alive or self.reconnect_requested:
+                self._connect()
+
     def ensure_live(self, symbols):
         """Keep a connection with spot subscriptions for `symbols` (called every few seconds by the live keeper)."""
         with self.conn_lock:
             self.spot_symbols = set(symbols)
             if not self.alive or self.reconnect_requested:
-                self.connect()
+                self._connect()
             else:
                 self._subscribe(self.spot_symbols)
 
@@ -466,8 +474,7 @@ class OpenAPIClient:
         end = datetime.fromisoformat(args["to"].replace("Z", "+00:00"))
         for attempt in (1, 2):
             try:
-                if not self.alive or self.reconnect_requested:
-                    self.connect()
+                self.ensure_connected()
                 return {"bars": self.trendbars(args["symbolName"], args["timeframe"], start, end), "truncated": False}
             except OpenAPIError as e:
                 if not e.token_problem or attempt == 2:

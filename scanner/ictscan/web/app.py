@@ -120,6 +120,37 @@ def create_app(store, scanner=None):
         return {"tf": tf, "kind": kind, "digits": digits, "cycles": cyc,
                 "bars": [{"time": int(b.t.timestamp()), "open": b.o, "high": b.h, "low": b.l, "close": b.c} for b in shown]}
 
+    @app.get("/api/live")
+    def live():
+        """Latest quotes (pushed by the Open API every tick) and the forming M5/M15/H1 candle for the dashboard symbols.
+        Without a stream (desktop MCP source, weekend) the last closed M5 close is returned with live=false."""
+        client = getattr(scanner, "client", None)
+        quotes = client.live() if client is not None and hasattr(client, "live") else {}
+        now = datetime.now(timezone.utc)
+        out = {}
+        for sym in DASH_SYMS:
+            m5 = store.load_bars(sym, "m5", 13)
+            q = quotes.get(sym) or {}
+            age = (now - datetime.fromisoformat(q["t"])).total_seconds() if q.get("t") else None
+            price = q.get("bid") if q.get("bid") is not None else (m5[-1]["c"] if m5 else None)
+            lb = q.get("bar")
+            bars = {}
+            fresh = age is not None and age < 120
+            for tf, sec in (("m5", 300), ("m15", 900), ("h1", 3600)):
+                if q.get("bid") is None or not fresh:
+                    break
+                start = int(now.timestamp()) // sec * sec
+                seq = [(b["o"], b["h"], b["l"], b["c"]) for b in m5 if b["t"] >= start]
+                if lb and lb["time"] >= start:
+                    seq.append((lb["open"], lb["high"], lb["low"], lb["close"]))
+                else:
+                    seq.append((price, price, price, price))
+                bars[tf] = {"time": start, "open": seq[0][0], "high": max(s[1] for s in seq), "low": min(s[2] for s in seq),
+                            "close": seq[-1][3]}
+            out[sym] = {"price": price, "ask": q.get("ask"), "t": q.get("t"), "age": round(age, 1) if age is not None else None,
+                        "live": fresh, "bars": bars}
+        return {"server_time": now.isoformat(), "symbols": out}
+
     @app.get("/api/overview")
     def overview():
         rows = []
@@ -134,7 +165,7 @@ def create_app(store, scanner=None):
                 "symbol": sym, "price": snap["price"], "as_of_ny": snap["as_of_ny"], "bias": snap["bias"],
                 "aligned": snap["aligned"], "states": {tf: tfs[tf]["state"] for tf in TIMEFRAMES},
                 "h4_position": tfs["h4"]["position"], "narrative": snap["narrative"],
-                "lean": ctx.get("lean"), "draw": ctx.get("draw"), "cycles": snap.get("cycles"),
+                "lean": ctx.get("lean"), "draw": ctx.get("draw"), "cycles": snap.get("cycles"), "nyplan": snap.get("nyplan"),
             })
         active = store.setups(active_only=True, limit=200, **FILT)
         closed = [s for s in store.setups(limit=1000, **FILT) if s["stage"] not in ACTIVE]

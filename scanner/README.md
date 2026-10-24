@@ -82,6 +82,17 @@ draws PXH/PXL (solid) and EQ (dotted) across the current cycle with short labels
 day blue, 90-min amber, month white), replacing only its own previous drawing. `--boxes` instead draws the latest day's
 six 90-minute windows as boxes (window high→low, AM amber / PM blue) with a start-time label (12 objects, own record file).
 
+**New York session plan** (`engine/nyplan.py`, overview page): for each index, the next/current NY session (after 16:00
+it plans the next trading day) — a lean from four votes (week and day cycle reads, D1 and 4H structure; needs a 2-vote
+margin, else "two-sided"), the six 90-minute windows (done / live / next with each window's high/low, countdown), the
+nearest untouched liquidity above and below (session levels + day/week PXH/PXL, equal prices merged), and two if/then
+scenarios — "Sell the buy-side raid" and "Buy the sell-side raid" with trigger, MMXM entry, targets and invalidation —
+ordered by the lean (primary / alternative). The lean only orders the scenarios; it is not a forecast.
+
+**Live prices**: the Open API client streams spot quotes for the three indices; the dashboard polls `/api/live` every
+second (price, forming M5/M15/H1 candle, signal distance, cycle countdowns). Quotes older than 120 s count as closed
+market (no forming bar). Signals still come from closed 5-minute candles (scan starts ~5 s after each close).
+
 ## Today's key levels and daily lean
 `engine/session.py` adds, for every symbol, the current New York trading day's (rolls at 17:00 NY) key levels — PWH/PWL,
 PDH/PDL, Asia (20:00–00:00), London (02:00–05:00) and New York AM (09:30–11:30) highs/lows, midnight and 09:30 opens — with

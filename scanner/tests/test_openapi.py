@@ -241,6 +241,78 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("Access not granted", body)
 
+class FakeWS:
+    """Socket double: replies to each request after a short delay and lets tests push spot events."""
+
+    def __init__(self, reply):
+        import queue as _q
+        self.inbox, self.reply, self.sent = _q.Queue(), reply, []
+
+    def send(self, raw):
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        out = self.reply(msg)
+        if out is not None:
+            self.inbox.put(json.dumps({**out, "clientMsgId": msg["clientMsgId"]}))
+
+    def push(self, msg):
+        self.inbox.put(json.dumps(msg))
+
+    def recv(self, timeout=None):
+        item = self.inbox.get()
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def close(self):
+        self.inbox.put(ConnectionError("closed"))
+
+
+class ReaderTests(unittest.TestCase):
+    def client(self, reply):
+        c = OpenAPIClient(creds=mock.Mock(), timeout=3)
+        c.ws = FakeWS(reply)
+        threading.Thread(target=c._reader, args=(c.ws,), daemon=True).start()
+        return c
+
+    def test_replies_are_routed_to_the_waiting_request_while_spots_flow(self):
+        c = self.client(lambda m: {"payloadType": openapi.SYMBOLS_RES, "payload": {"symbol": []}} if m["payloadType"] == openapi.SYMBOLS_REQ else None)
+        c.names = {7: "NAS100"}
+        c.ws.push({"payloadType": openapi.SPOT_EVENT, "payload": {"symbolId": 7, "bid": 2899770000, "ask": 2899880000, "timestamp": 1792692000000}})
+        self.assertEqual(c._rpc(openapi.SYMBOLS_REQ, {}, openapi.SYMBOLS_RES), {"symbol": []})
+        for _ in range(50):
+            if c.live().get("NAS100"):
+                break
+            time.sleep(0.02)
+        q = c.live()["NAS100"]
+        self.assertEqual((q["bid"], q["ask"]), (28997.7, 28998.8))
+        self.assertEqual(q["bar"]["time"] % 300, 0)
+
+    def test_forming_bar_tracks_high_low_close_and_rolls_every_5_minutes(self):
+        c = OpenAPIClient(creds=mock.Mock())
+        c.names = {7: "NAS100"}
+        t0 = 1792692000000  # a 5-minute boundary
+        for ms, bid in ((0, 100.0), (60_000, 103.0), (120_000, 98.0), (200_000, 101.0), (300_000, 99.0)):
+            c._on_spot({"symbolId": 7, "bid": int(bid * 100000), "timestamp": t0 + ms})
+            if ms == 200_000:
+                self.assertEqual({k: c.live_bars["NAS100"][k] for k in ("open", "high", "low", "close")},
+                                 {"open": 100.0, "high": 103.0, "low": 98.0, "close": 101.0})
+        self.assertEqual(c.live_bars["NAS100"]["time"], t0 // 1000 + 300)
+        self.assertEqual(c.live_bars["NAS100"]["open"], 99.0)
+
+    def test_lost_connection_fails_waiting_requests_fast(self):
+        c = self.client(lambda m: None)
+        c.ws.inbox.put(ConnectionError("reset"))
+        t = time.time()
+        with self.assertRaises(MCPError):
+            c._rpc(openapi.SYMBOLS_REQ, {}, openapi.SYMBOLS_RES)
+        self.assertLess(time.time() - t, 2)
+        self.assertFalse(c.alive)
+
+    def test_spot_subscription_is_a_permitted_read_only_request(self):
+        self.assertIn(openapi.SUB_SPOTS, openapi.ALLOWED_REQUESTS)
+        self.assertFalse({2106, 2107, 2108, 2109, 2110, 2111} & openapi.ALLOWED_REQUESTS)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,21 @@ class Scanner:
         self.store.set_meta("health", h)
         return h
 
+    def run_live(self, symbols, every=2.0):
+        """Keep the Open API spot stream for `symbols` alive (live prices for the dashboard, updated every second).
+        Only for clients that support streaming; the desktop MCP source has no push quotes."""
+        if not hasattr(self.client, "ensure_live"):
+            return
+        backoff = every
+        while not self.stop.is_set():
+            try:
+                self.client.ensure_live(symbols)
+                backoff = every
+            except Exception as e:  # noqa: BLE001 — retry with backoff; the 5-minute scan keeps working regardless
+                log.warning("live quotes: %s", e)
+                backoff = min(backoff * 2, 60)
+            self.stop.wait(backoff)
+
     def scan_once(self):
         t0 = time.time()
         server_now = parse(self.client.call("get_server_time")["utcTime"])

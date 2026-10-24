@@ -79,4 +79,4 @@ WEB_PORT = int(os.environ.get("ICTSCAN_PORT", "8765"))
 # Dashboard login (HTTP Basic). Required whenever the dashboard is reachable from the internet.
 DASH_USER = os.environ.get("ICTSCAN_USER", "admin")
 DASH_PASSWORD = os.environ.get("ICTSCAN_PASSWORD", "")
-SCAN_DELAY_SECONDS = 20  # wait after each M5 close so the broker has the closed candle
+SCAN_DELAY_SECONDS = 5 if DATA_SOURCE == "openapi" else 20  # wait after each M5 close so the broker has the closed candle

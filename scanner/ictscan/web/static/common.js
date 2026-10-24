@@ -25,6 +25,7 @@ function renderHeader() {
   h.innerHTML = `<a class="brand" href="/"><span class="logo">◆</span><span>ICT Scanner<small>Market maker models · US indices</small></span></a>
     <nav>${link('/', 'Overview')}${link('/cycles', 'Time cycles')}${NAV.map(s => link(`/symbol/${s}`, s)).join('')}</nav>
     <span class="spacer"></span>
+    <span id="live-badge" class="livebadge off" title="Prices stream every second from Pepperstone while the market is open">…</span>
     <span id="health" class="small muted"></span>
     <button class="btn" id="notif-perm" style="display:none">Enable pop-ups</button>
     <a class="bell" href="/notifications" title="Notifications">🔔<span id="unread" class="badge" style="display:none">0</span></a>`;
@@ -74,6 +75,30 @@ async function pollNotifications() {
 
 function startShell() { renderHeader(); pollNotifications(); setInterval(pollNotifications, 20000); }
 
+// Live prices: polls /api/live every second while the tab is visible and hands the symbols map to `cb`.
+let LIVE = {};
+function startLive(cb) {
+  let busy = false;
+  const tick = async () => {
+    if (busy || document.hidden) return;
+    busy = true;
+    try {
+      const d = await api('/api/live');
+      LIVE = d.symbols || {};
+      const anyLive = Object.values(LIVE).some(x => x.live);
+      const b = document.getElementById('live-badge');
+      if (b) { b.className = 'livebadge ' + (anyLive ? 'on' : 'off'); b.textContent = anyLive ? 'LIVE' : 'market closed'; }
+      cb && cb(LIVE);
+    } catch (e) { console.warn(e); } finally { busy = false; }
+  };
+  tick(); setInterval(tick, 1000);
+}
+function flash(el, now, prev) {
+  if (!el || now == null) return;
+  el.textContent = now;
+  if (prev != null && now !== prev) { el.classList.remove('up', 'down'); void el.offsetWidth; el.classList.add(now > prev ? 'up' : 'down'); }
+}
+
 function dirTag(dir) { return dir === 'bullish' ? '<span class="dirtag buy">▲ BUY</span>' : '<span class="dirtag sell">▼ SELL</span>'; }
 function modeChip(m) { return m ? `<span class="chip ${esc(m)}">${esc(m)}</span>` : ''; }
 function scoreBar(score, n) { n = n || 7; return `<span class="scorebar" title="${score}/${n} checks">${Array.from({ length: n }, (_, i) => `<i class="${i < score ? 'on' : ''}"></i>`).join('')}</span>`; }
@@ -92,8 +117,19 @@ function signalCard(s) {
     </div>
     <div class="sig-meta"><span>R:R <b>${s.rr ?? '—'}</b></span><span>Checks ${scoreBar(s.score, s.checks)} <b>${s.score}/${s.checks || 7}</b></span>
       ${s.smt ? `<span title="${esc(s.smt)}">SMT <b>✓</b></span>` : ''}</div>
+    <div class="sig-live" data-live="${esc(s.symbol)}" data-entry="${s.entry ?? ''}"></div>
     <div class="sig-note"><span>${esc(s.last_note)}</span><span class="dim" style="white-space:nowrap">${esc(s.last_ny)} NY · <a href="${href}">details →</a></span></div>
   </div>`;
+}
+
+function updateSignalLive(live) {
+  document.querySelectorAll('.sig-live[data-live]').forEach(el => {
+    const q = live[el.dataset.live], e = parseFloat(el.dataset.entry);
+    if (!q || q.price == null || isNaN(e)) { el.innerHTML = ''; return; }
+    const d = DIGITS[el.dataset.live] ?? 2, gap = q.price - e;
+    el.innerHTML = `<span>now <b class="mono">${q.price.toFixed(d)}</b>${q.live ? '' : ' <span class="dim">(last close)</span>'}</span>
+      <span class="mono">${Math.abs(gap).toFixed(d)} pts ${gap >= 0 ? 'above' : 'below'} entry</span>`;
+  });
 }
 
 function resultRow(s) {
