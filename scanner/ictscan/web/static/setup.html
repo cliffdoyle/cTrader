@@ -25,8 +25,8 @@ startShell();
 const SID = decodeURIComponent(location.pathname.split('/').pop());
 let s, tf, chart;
 function btStat(x) { return x && x.trades ? `${x.trades} trades, ${x.win_rate}% wins, ${fmtR(x.avg_r)} avg, ${fmtR(x.total_r)} total` : 'no closed trades'; }
-function btLine(b) { return `<div class="small">${esc(s.setup)} all symbols: ${btStat(b.setup)}</div><div class="small">${esc(s.setup)} ${esc(s.symbol)}: ${btStat(b.setup_symbol)}</div><div class="small muted">${esc(b.period)} · <a href="/backtest">details</a></div>`; }
-const COLORS = { watch: '#58a6ff', armed: '#f0b429', limit: '#f0b429', triggered: '#a371f7', breakeven_set: '#f0b429', target: '#26a69a', stopped: '#ef5350', breakeven: '#8b98a8', invalidated: '#8b98a8', expired: '#8b98a8', missed: '#8b98a8' };
+function btLine(b) { const lab = b.label || s.setup; return `<div class="small">${esc(lab)} all symbols: ${btStat(b.setup)}</div><div class="small">${esc(lab)} ${esc(s.symbol)}: ${btStat(b.setup_symbol)}</div><div class="small muted">${esc(b.period)}${b.label ? '' : ' · <a href="/backtest">details</a>'}</div>`; }
+const COLORS = { watch: '#58a6ff', armed: '#f0b429', limit: '#f0b429', triggered: '#a371f7', breakeven_set: '#f0b429', add_limit: '#f0b429', add: '#a371f7', target: '#26a69a', stopped: '#ef5350', breakeven: '#8b98a8', invalidated: '#8b98a8', expired: '#8b98a8', missed: '#8b98a8' };
 
 async function drawChart() {
   if (!chart) chart = makeChart(document.getElementById('chart'), DIGITS[s.symbol]);

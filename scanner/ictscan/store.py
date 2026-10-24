@@ -149,6 +149,7 @@ class Store:
 
 
 LEVEL = {"watch": "info", "armed": "alert", "limit": "alert", "triggered": "alert", "breakeven_set": "alert",
+         "add_limit": "alert", "add": "alert",
          "target": "result", "stopped": "result", "breakeven": "result", "invalidated": "info", "expired": "info", "missed": "info"}
 
 
@@ -158,7 +159,7 @@ def describe(s, ev):
     parts = [ev["note"]]
     if ev["stage"] in ("limit", "triggered", "watch") and s.get("entry") is not None:
         parts.append(f"Entry {s['entry']} · Stop {s['stop']} · TP1 {s['tp1']} ({s['rr']}R)")
-    if ev["stage"] in ("target", "stopped", "breakeven") and s.get("result_r") is not None:
+    if ev["stage"] in ("target", "stopped", "breakeven", "expired") and s.get("result_r") is not None:
         parts.append(f"Result {s['result_r']:+}R")
     parts.append(f"{ev['ny']} NY · score {s['score']}/7" + (f" · grade {s['grade']}" if s.get("grade") else ""))
     return title, " · ".join(parts), LEVEL.get(ev["stage"], "info")

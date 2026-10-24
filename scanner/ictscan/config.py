@@ -20,6 +20,8 @@ SYMBOLS = {
 # A = with the 4H and 1H trend, daily not against it, POI at a W/D key level, and every other check passes.
 # Use ("A", "B", "C") to list everything again.
 SHOW_GRADES = ("A",)
+# Setups whose notifications pop up even while the old S1–S4 alerts are muted (store meta "alerts_muted").
+ALERT_SETUPS = ("MMXM",)
 
 TIMEFRAMES = ("w1", "d1", "h4", "h1", "m15", "m5")
 # Bars kept in memory per scan (the cache in SQLite can hold more).

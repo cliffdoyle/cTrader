@@ -28,7 +28,7 @@ tr:hover td { background:#1b222c; }
 .stage.watch { background:#22303f; color:var(--info); } .stage.armed, .stage.limit { background:#3b2f10; color:var(--warn); }
 .stage.triggered { background:#2b1f45; color:var(--accent); } .stage.target { background:rgba(38,166,154,.2); color:var(--bull); }
 .stage.stopped { background:rgba(239,83,80,.2); color:var(--bear); } .stage.invalidated, .stage.expired, .stage.missed, .stage.breakeven { background:#2a3340; color:var(--muted); }
-.stage.breakeven_set { background:#3b2f10; color:var(--warn); }
+.stage.breakeven_set, .stage.add_limit { background:#3b2f10; color:var(--warn); } .stage.add { background:#2b1f45; color:var(--accent); }
 .muted { color:var(--muted); } .small { font-size:12px; } .mono { font-family: Consolas, monospace; }
 .bull { color:var(--bull); } .bear { color:var(--bear); }
 .card-title { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; }

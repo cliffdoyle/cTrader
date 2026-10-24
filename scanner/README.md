@@ -59,6 +59,15 @@ grade (`grade()` in `engine/setups.py`):
 The dashboard lists and notifies only the grades in `SHOW_GRADES` (default `("A",)`); all setups are still stored.
 News is not checked — look at the economic calendar before acting.
 
+## MMXM — the main strategy (2026-10-24)
+The user's chosen model: ICT market maker buy/sell models with SMT across NAS100/US30/US500, rules in
+[strategy-mmxm.md](../.github/skills/ctrader-mcp/references/strategy-mmxm.md). Detector `engine/mmxm.py` (the sell model
+is the buy logic on price-mirrored series), dashboard records `engine/mmxm_live.py`, backtest
+`python -m ictscan.mmxm_backtest [--db hist-indices.db]`. Built exactly as specified (both timeframes, stop below the MSS
+FVG); MMXM alerts pop up while S1–S4 stay muted (`ALERT_SETUPS`). Backtest (Oct 2025 – Oct 2026, costs included):
+as specified swing +0.93R/trade (113 trades, but only +0.2R without the 3 best) and intraday −0.25R (428 trades); the
+swing version with the stop beyond the reversal extreme was the only one positive in both halves after capping outliers.
+
 ## Today's key levels and daily lean
 `engine/session.py` adds, for every symbol, the current New York trading day's (rolls at 17:00 NY) key levels — PWH/PWL,
 PDH/PDL, Asia (20:00–00:00), London (02:00–05:00) and New York AM (09:30–11:30) highs/lows, midnight and 09:30 opens — with

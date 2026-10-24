@@ -8,8 +8,10 @@ from datetime import datetime, timedelta, timezone
 
 from .config import PARAMS, REFRESH, SCAN_DELAY_SECONDS, SYMBOLS, TIMEFRAMES, WINDOW
 from .data import parse, sync
+from .engine import mmxm
 from .engine.context import Context
 from .engine.core import make_bars
+from .engine.mmxm_live import live_setups
 from .engine.setups import detect_all
 from .engine.topdown import topdown
 from .mcp import MCPUnavailable
@@ -50,12 +52,15 @@ class Scanner:
         if last_scan and server_now - parse(last_scan) > timedelta(minutes=15):
             offline_since = last_scan
         new_notes, errors = 0, []
+        index_bars = {}
         for sym, cfg in SYMBOLS.items():
             try:
                 bars = {tf: make_bars(self.store.load_bars(sym, tf, WINDOW[tf]), tf) for tf in TIMEFRAMES}
                 if any(len(b) < 50 for b in bars.values()):
                     errors.append(f"{sym}: not enough history yet")
                     continue
+                if sym in mmxm.INDICES:
+                    index_bars[sym] = bars
                 ctx = Context(sym, bars, cfg, PARAMS)
                 self.store.save_snapshot(sym, topdown(ctx))
                 # A newly added symbol's backfilled history is pre-marked as read, like the first ever scan.
@@ -64,6 +69,15 @@ class Scanner:
             except Exception as e:  # one bad symbol must not stop the others
                 log.exception("analysis failed for %s", sym)
                 errors.append(f"{sym}: {e}")
+        if len(index_bars) == len(mmxm.INDICES):  # MMXM needs all three indices for SMT
+            try:
+                # The first MMXM scan backfills the last 7 days; mark that history as read so it does not pop up.
+                quiet = quiet_before if self.store.get_meta("mmxm_initialized", False) else server_now.isoformat()
+                new_notes += self.store.save_setups(live_setups(index_bars, server_now), quiet, offline_since)
+                self.store.set_meta("mmxm_initialized", True)
+            except Exception as e:
+                log.exception("MMXM analysis failed")
+                errors.append(f"MMXM: {e}")
         self.store.set_meta("initialized", True)
         self.store.set_meta("last_scan", server_now.isoformat())
         dur = round(time.time() - t0, 1)

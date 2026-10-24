@@ -11,7 +11,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from ..config import DASH_PASSWORD, DASH_USER, DATA_SOURCE, SHOW_GRADES, SYMBOLS, TIMEFRAMES
+from ..config import ALERT_SETUPS, DASH_PASSWORD, DASH_USER, DATA_SOURCE, SHOW_GRADES, SYMBOLS, TIMEFRAMES
 from ..engine.core import TF_SECONDS
 
 STATIC = Path(__file__).parent / "static"
@@ -153,7 +153,13 @@ def create_app(store, scanner=None):
         if not s:
             raise HTTPException(404, "unknown setup")
         rep = store.get_meta("backtest:in-sample")
-        if rep:
+        if s["setup"] == "MMXM":
+            mm = store.get_meta("backtest:mmxm")
+            mode = s["id"].split("-")[2] if s["id"].count("-") >= 4 else None
+            if mm and mode:
+                s["backtest"] = {"setup": mm["by_mode"].get(mode), "setup_symbol": mm["by_mode_symbol"].get(f"{mode} {s['symbol']}"),
+                                 "period": mm["period"], "label": f"MMXM {mode}"}
+        elif rep:
             s["backtest"] = {"setup": rep["by_setup"].get(s["setup"]),
                              "setup_symbol": rep["by_setup_symbol"].get(f"{s['setup']} {s['symbol']}"),
                              "period": f"{rep['from'][:10]} → {rep['to'][:10]} (in-sample)"}
@@ -161,8 +167,12 @@ def create_app(store, scanner=None):
 
     @app.get("/api/notifications")
     def notifications(after_id: int = 0, limit: int = 100, unread: bool = False):
-        return {"items": store.notifications(after_id, limit, unread, SHOW_GRADES), "unread": store.unread_count(SHOW_GRADES),
-                "muted": store.get_meta("alerts_muted", False)}
+        muted = store.get_meta("alerts_muted", False)
+        items = store.notifications(after_id, limit, unread, SHOW_GRADES)
+        for n in items:  # setup ids look like SYMBOL-KIND-…
+            kind = (n["setup_id"] or "").split("-")[1] if (n["setup_id"] or "").count("-") else ""
+            n["popup"] = (not muted) or kind in ALERT_SETUPS
+        return {"items": items, "unread": store.unread_count(SHOW_GRADES), "muted": muted, "alert_setups": list(ALERT_SETUPS)}
 
     @app.post("/api/notifications/read")
     def mark_read(ids: list[int] | None = Body(default=None, embed=True)):

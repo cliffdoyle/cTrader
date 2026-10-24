@@ -55,7 +55,7 @@ async function pollNotifications() {
     const fresh = r.items.sort((a, b) => a.id - b.id);
     for (const n of fresh) {
       last = Math.max(last, n.id);
-      if (r.muted || n.read || n.level === 'info') continue;
+      if (!(n.popup ?? !r.muted) || n.read || n.level === 'info') continue;
       toast(n);
       if ('Notification' in window && Notification.permission === 'granted') {
         const bn = new Notification(n.title, { body: n.body, tag: `${n.setup_id}:${n.stage}` });
