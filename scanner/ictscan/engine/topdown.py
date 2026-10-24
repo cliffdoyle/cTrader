@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .core import dealing_range
+from .session import session_summary
 from .setups import ny
 
 TF_LABEL = {"w1": "Weekly", "d1": "Daily", "h4": "4H", "h1": "1H", "m15": "15m", "m5": "5m"}
@@ -73,11 +74,15 @@ def narrative(ctx, tfs):
 
 def topdown(ctx):
     tfs = {tf: tf_summary(ctx, tf) for tf in ("w1", "d1", "h4", "h1", "m15", "m5")}
+    try:
+        sess = session_summary(ctx)
+    except Exception as e:  # noqa: BLE001 — the session panel must never break the scan
+        sess = {"error": str(e)}
     return {
         "symbol": ctx.symbol, "price": ctx.fmt(ctx.price), "as_of": ctx.now.isoformat(), "as_of_ny": ny(ctx.now),
         "bias": tfs["h4"]["state"], "aligned": tfs["h1"]["state"] == tfs["h4"]["state"],
         "zones": [{**z, "low": ctx.fmt(z["low"]), "high": ctx.fmt(z["high"]), "mid": ctx.fmt(z["mid"]),
                    "distance": ctx.fmt(z["distance"])} for z in ctx.zones[:8]],
-        "timeframes": tfs, "narrative": narrative(ctx, tfs),
+        "timeframes": tfs, "narrative": narrative(ctx, tfs), "session": sess,
         "unit": ctx.cfg["unit"], "pip": ctx.cfg["pip"],
     }

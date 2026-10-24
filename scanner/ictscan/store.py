@@ -80,7 +80,7 @@ class Store:
                     new_notes += cur.rowcount
         return new_notes
 
-    def setups(self, symbol=None, active_only=False, limit=200):
+    def setups(self, symbol=None, active_only=False, limit=200, grades=None):
         q, args = "SELECT data FROM setups", []
         cond = []
         if symbol:
@@ -88,6 +88,9 @@ class Store:
             args.append(symbol)
         if active_only:
             cond.append("stage IN ('watch','armed','limit','triggered')")
+        if grades:
+            cond.append(f"json_extract(data, '$.grade') IN ({','.join('?' * len(grades))})")
+            args.extend(grades)
         if cond:
             q += " WHERE " + " AND ".join(cond)
         q += " ORDER BY stage_t DESC LIMIT ?"
@@ -100,14 +103,23 @@ class Store:
             r = c.execute("SELECT data FROM setups WHERE id=?", (sid,)).fetchone()
         return json.loads(r[0]) if r else None
 
-    def notifications(self, after_id=0, limit=100, unread_only=False):
-        q = "SELECT * FROM notifications WHERE id>?" + (" AND read=0" if unread_only else "") + " ORDER BY t DESC, id DESC LIMIT ?"
-        with self._conn() as c:
-            return [dict(r) for r in c.execute(q, (after_id, limit)).fetchall()]
+    @staticmethod
+    def _grade_cond(grades):
+        if not grades:
+            return "", []
+        marks = ",".join("?" * len(grades))
+        return f" AND setup_id IN (SELECT id FROM setups WHERE json_extract(data, '$.grade') IN ({marks}))", list(grades)
 
-    def unread_count(self):
+    def notifications(self, after_id=0, limit=100, unread_only=False, grades=None):
+        gc, gargs = self._grade_cond(grades)
+        q = "SELECT * FROM notifications WHERE id>?" + (" AND read=0" if unread_only else "") + gc + " ORDER BY t DESC, id DESC LIMIT ?"
         with self._conn() as c:
-            return c.execute("SELECT COUNT(*) FROM notifications WHERE read=0").fetchone()[0]
+            return [dict(r) for r in c.execute(q, (after_id, *gargs, limit)).fetchall()]
+
+    def unread_count(self, grades=None):
+        gc, gargs = self._grade_cond(grades)
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM notifications WHERE read=0" + gc, gargs).fetchone()[0]
 
     def mark_read(self, ids=None):
         with self.lock, self._conn() as c:
@@ -136,8 +148,8 @@ class Store:
         return json.loads(r[0]) if r else default
 
 
-LEVEL = {"watch": "info", "armed": "alert", "limit": "alert", "triggered": "alert",
-         "target": "result", "stopped": "result", "invalidated": "info", "expired": "info", "missed": "info"}
+LEVEL = {"watch": "info", "armed": "alert", "limit": "alert", "triggered": "alert", "breakeven_set": "alert",
+         "target": "result", "stopped": "result", "breakeven": "result", "invalidated": "info", "expired": "info", "missed": "info"}
 
 
 def describe(s, ev):
@@ -146,7 +158,7 @@ def describe(s, ev):
     parts = [ev["note"]]
     if ev["stage"] in ("limit", "triggered", "watch") and s.get("entry") is not None:
         parts.append(f"Entry {s['entry']} · Stop {s['stop']} · TP1 {s['tp1']} ({s['rr']}R)")
-    if ev["stage"] in ("target", "stopped") and s.get("result_r") is not None:
+    if ev["stage"] in ("target", "stopped", "breakeven") and s.get("result_r") is not None:
         parts.append(f"Result {s['result_r']:+}R")
-    parts.append(f"{ev['ny']} NY · score {s['score']}/7")
+    parts.append(f"{ev['ny']} NY · score {s['score']}/7" + (f" · grade {s['grade']}" if s.get("grade") else ""))
     return title, " · ".join(parts), LEVEL.get(ev["stage"], "info")

@@ -22,8 +22,7 @@ from .data import CALENDAR, fetch_range, parse
 from .engine.context import Context
 from .engine.core import TF_SECONDS, make_bars
 from .engine.setups import FINAL, detect_all
-from .mcp import MCPClient
-from .config import MCP_ENDPOINT
+from .source import make_client
 from .store import Store
 
 HIST_DB = DATA_DIR / "backtest.db"
@@ -31,13 +30,14 @@ NY = ZoneInfo("America/New_York")
 log = logging.getLogger("ictscan.backtest")
 
 # Round-trip cost per trade in price units: typical spread + commission (Pepperstone Razor ≈ $7/lot FX, none on CFDs).
-COSTS = {"NAS100": 1.5, "US30": 2.5, "EURUSD": 0.00017, "GBPUSD": 0.00022, "XAUUSD": 0.25, "GBPJPY": 0.031}
+COSTS = {"NAS100": 1.5, "US30": 2.5, "US500": 0.6, "EURUSD": 0.00017, "GBPUSD": 0.00022, "AUDUSD": 0.00017,
+         "USDCAD": 0.0002, "USDJPY": 0.017, "XAUUSD": 0.25, "GBPJPY": 0.031}
 IS_FRACTION = 0.8
 
 
 def fetch(months):
     store = Store(HIST_DB)
-    client = MCPClient(MCP_ENDPOINT, timeout=120)
+    client = make_client(timeout=120)
     now = parse(client.call("get_server_time")["utcTime"])
     start_test = now - timedelta(days=30.5 * months)
     store.set_meta("range", {"start": start_test.isoformat(), "end": now.isoformat(), "months": months})
@@ -94,7 +94,7 @@ def replay(t0, t1, params):
 
 def trade_r(s):
     """Net R after costs for a closed trade, or None if the setup never became a trade or is unresolved."""
-    if s["stage"] not in ("target", "stopped") or s["entry"] is None:
+    if s["stage"] not in ("target", "stopped", "breakeven") or s["entry"] is None:
         return None
     risk = abs(s["entry"] - s["stop"])
     if risk <= 0:
@@ -125,6 +125,7 @@ def report(setups, part, t0, t1):
             continue
         exit_t = s["timeline"][-1]["t"]
         trades.append({"id": s["id"], "symbol": s["symbol"], "setup": s["setup"], "dir": s["dir"], "score": s["score"],
+                       "grade": s.get("grade"),
                        "entry": s["entry"], "stop": s["stop"], "tp1": s["tp1"], "rr": s["rr"], "gross_r": s["result_r"],
                        "net_r": r, "exit_t": exit_t, "key_t": s["key_t"],
                        "trigger_ny": next((e["ny"] for e in s["timeline"] if e["stage"] == "triggered"), ""),
@@ -160,6 +161,7 @@ def report(setups, part, t0, t1):
         "by_symbol": by(lambda t: t["symbol"]),
         "by_month": by(lambda t: t["exit_t"][:7]),
         "by_score": by(lambda t: f"{t['setup']} score {'5+' if t['score'] >= 5 else '≤4'}"),
+        "by_grade": by(lambda t: t["grade"] or "?"),
         "s3_bias": {"with H4 bias": summarize([t for t in s3 if t["checklist"].get("With H4 bias")]),
                     "against H4 bias": summarize([t for t in s3 if t["checklist"].get("With H4 bias") is False])},
         "checklist_effect": checklist_effect,
@@ -190,7 +192,8 @@ def run(part, overrides=None, label="baseline", publish=True):
     params = {**PARAMS, **(overrides or {})}
     setups = replay(t0, t1, params)
     rep = report(setups, part, t0, t1)
-    rep["label"], rep["params"] = label, {k: params[k] for k in ("s1_stop", "s2_stop", "tp_mode", "enabled_setups")}
+    rep["label"], rep["params"] = label, {k: params[k] for k in ("s1_stop", "s2_stop", "tp_mode", "enabled_setups",
+                                                                 "stop_buffer_atr", "stop_min_atr", "be_at_r")}
     (DATA_DIR / f"backtest-{part}-{label}.json").write_text(json.dumps(rep, indent=1, default=str), encoding="utf-8")
     slim = {k: v for k, v in rep.items() if k != "trades"}
     variants = live.get_meta(f"backtest_variants:{part}", {})

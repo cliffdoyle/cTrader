@@ -1,0 +1,24 @@
+# ICT Scanner on a server (reads candles from the cTrader Open API; no cTrader desktop app needed).
+# Usage (from this folder):  cp .env.example .env  → fill it in →  docker compose up -d --build
+services:
+  ictscan:
+    build: ..
+    container_name: ictscan
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ICTSCAN_SOURCE: openapi
+      TZ: UTC
+    volumes:
+      - ictscan-data:/data          # SQLite, logs and the rotating Open API tokens
+    ports:
+      # Default: only reachable from the server itself (use a Cloudflare Tunnel or SSH tunnel).
+      # To expose it through a Cloudflare origin rule instead, set BIND=0.0.0.0 in .env (the dashboard password is then mandatory).
+      - "${BIND:-127.0.0.1}:${HOST_PORT:-8083}:8765"
+    mem_limit: 384m
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+volumes:
+  ictscan-data:

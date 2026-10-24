@@ -14,7 +14,7 @@ NAMES = {
     "S3": "H1 liquidity sweep + M5 BOS/FVG",
     "S4": "Equal highs/lows + FVG limit",
 }
-FINAL = {"target", "stopped", "invalidated", "expired", "missed"}
+FINAL = {"target", "stopped", "breakeven", "invalidated", "expired", "missed"}
 
 
 def ny(t):
@@ -41,6 +41,28 @@ def stage(s, name, t, note, price=None):
     s["stage"], s["stage_t"] = name, t.isoformat()
 
 
+def place_stop(ctx, d, level, entry, t):
+    """Stop beyond the structural level by max(spread buffer, stop_buffer_atr × H1 ATR), and at least
+    stop_min_atr × H1 ATR from the entry, so normal noise and stop hunts just past the level do not take it out."""
+    p, a = ctx.p, ctx.atr_at("h1", t)
+    pad = max(ctx.cfg["buffer"], p.get("stop_buffer_atr", 0) * a)
+    stop = level - pad if _bull(d) else level + pad
+    floor = p.get("stop_min_atr", 0) * a
+    if abs(entry - stop) < floor:
+        stop = entry - floor if _bull(d) else entry + floor
+    return ctx.fmt(stop)
+
+
+def stop_rule(ctx):
+    p = ctx.p
+    parts = []
+    if p.get("stop_buffer_atr"):
+        parts.append(f"{p['stop_buffer_atr']:g}×H1 ATR past the level")
+    if p.get("stop_min_atr"):
+        parts.append(f"at least {p['stop_min_atr']:g}×H1 ATR from entry")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 def set_targets(ctx, s, tfs, t):
     d, entry, stop = s["dir"], s["entry"], s["stop"]
     risk = abs(entry - stop)
@@ -59,18 +81,30 @@ def set_targets(ctx, s, tfs, t):
 
 
 def run_trade(ctx, s, start_t):
-    d, stop, tp = s["dir"], s["stop"], s["tp1"]
+    d, stop, tp, entry = s["dir"], s["stop"], s["tp1"], s["entry"]
+    risk = abs(entry - stop)
+    be_at = ctx.p.get("be_at_r", 0) or 0
+    moved = False
     for b in ctx.path.bars_from(start_t):
         hit_stop = b.l <= stop if _bull(d) else b.h >= stop
         hit_tp = b.h >= tp if _bull(d) else b.l <= tp
         if hit_stop:
-            stage(s, "stopped", b.end, "Stop hit" + (" (TP1 was also inside this candle; counted as a loss)" if hit_tp else ""), stop)
-            s["result_r"] = -1.0
+            if moved:
+                stage(s, "breakeven", b.end, "Stopped at break-even (entry)" + (" — TP1 was also inside this candle" if hit_tp else ""), stop)
+                s["result_r"] = 0.0
+            else:
+                stage(s, "stopped", b.end, "Stop hit" + (" (TP1 was also inside this candle; counted as a loss)" if hit_tp else ""), stop)
+                s["result_r"] = -1.0
             return
         if hit_tp:
             stage(s, "target", b.end, f"TP1 reached ({s['tp1_name']})", tp)
             s["result_r"] = s["rr"]
             return
+        if be_at and not moved and risk and ((b.h - entry) if _bull(d) else (entry - b.l)) >= be_at * risk:
+            moved, stop = True, entry
+            # Management note only: the setup stays 'triggered' until it closes.
+            s["timeline"].append({"stage": "breakeven_set", "t": b.end.isoformat(), "ny": ny(b.end),
+                                  "note": f"Price reached +{be_at:g}R — move the stop to break-even ({entry})", "price": entry})
 
 
 def run_limit(ctx, s, ready_t, expire_t, invalid_t=None):
@@ -129,6 +163,25 @@ def checklist(ctx, s, t, poi_ok, swept):
         items.append((f"R:R to TP1 ≥ {p['min_rr']:g}", (s["rr"] or 0) >= p["min_rr"], f"{s['rr']}R to {s['tp1_name']} {s['tp1']}"))
     s["checklist"] = [{"name": n, "ok": ok, "detail": det} for n, ok, det in items]
     s["score"] = sum(1 for _, ok, _ in items if ok is True)
+    s["d1_state"] = ctx.state_at("d1", t)
+    s["grade"], s["grade_note"] = grade(s)
+
+
+def grade(s):
+    """A: with the H4 and H1 trend, D1 not against it, POI at a W/D key level, and no check failed (checks that are
+    still pending, e.g. R:R before the entry is known, do not count against it). B: with the H4 trend and D1 not
+    against it, but some check failed. C: against the H4 trend or the daily trend."""
+    opposite = "bearish" if _bull(s["dir"]) else "bullish"
+    ok = {c["name"]: c["ok"] for c in s["checklist"]}
+    if ok.get("With H4 bias") is not True or s["d1_state"] == opposite:
+        return "C", "against the 4H trend" if ok.get("With H4 bias") is not True else "against the daily trend"
+    failed = [n for n, v in ok.items() if v is False]
+    if ok.get("H1 aligned") is True and ok.get("POI at a W/D key level") is True and not failed:
+        pending = [n for n, v in ok.items() if v is None]
+        return "A", "all checks pass" + (f" so far ({len(pending)} pending)" if pending else "")
+    if failed:
+        return "B", "failed: " + ", ".join(failed)
+    return "B", "H1 or key-level check not met"
 
 
 def _swept_between(ctx, tf, side, t0, t1):
@@ -213,18 +266,15 @@ def detect_s1(ctx, since):
                 out.append(s)
                 continue
             be = cb[trig.j].end
-            buf = ctx.cfg["buffer"]
             s["entry"] = ctx.fmt(trig.close)
-            if p.get("s1_stop") == "ob_far":
-                s["stop"] = ctx.fmt(ob.low - buf if _bull(d) else ob.high + buf)
-            else:
-                s["stop"] = ctx.fmt(trig.prot - buf if _bull(d) else trig.prot + buf)
+            level = (ob.low if _bull(d) else ob.high) if p.get("s1_stop") == "ob_far" else trig.prot
+            s["stop"] = place_stop(ctx, d, level, s["entry"], be)
             if (s["entry"] <= s["stop"]) if _bull(d) else (s["entry"] >= s["stop"]):
                 continue
             set_targets(ctx, s, [poi_tf], be)
             stop_desc = "beyond the order block's far edge" if p.get("s1_stop") == "ob_far" else f"beyond the {conf_tf.upper()} leg extreme {ctx.fmt(trig.prot)}"
             s["reasons"].append(f"{conf_tf.upper()} CHoCH {d} on the {ny(cb[trig.j].t)} candle: close {ctx.fmt(trig.close)} beyond {ctx.fmt(trig.level)}; "
-                                f"stop {stop_desc}.")
+                                f"stop {stop_desc}{stop_rule(ctx)}.")
             stage(s, "triggered", be, f"{conf_tf.upper()} CHoCH confirmed; entry at candle close", s["entry"])
             checklist(ctx, s, be, (True, "order block in the correct half"),
                       _swept_between(ctx, conf_tf, "low" if _bull(d) else "high", ob.tap_t, be))
@@ -299,10 +349,10 @@ def detect_s2(ctx, since):
         buf = ctx.cfg["buffer"]
         s["entry"] = ctx.fmt(m5[sw.k].c)
         if ctx.p.get("s2_stop") == "protected":
-            s["stop"] = ctx.fmt(e.prot - buf if _bull(d) else e.prot + buf)
+            s["stop"] = place_stop(ctx, d, e.prot, s["entry"], sw.t)
             stop_desc = f"beyond the H1 protected {'low' if _bull(d) else 'high'} {ctx.fmt(e.prot)}"
         else:
-            s["stop"] = ctx.fmt(sw.extreme - buf if _bull(d) else sw.extreme + buf)
+            s["stop"] = place_stop(ctx, d, sw.extreme, s["entry"], sw.t)
             stop_desc = f"beyond the sweep extreme {ctx.fmt(sw.extreme)}"
         j = ctx.idx("h1", sw.t)
         tp = st.ext[j] if st.state[j] == d else leg_ext
@@ -316,7 +366,7 @@ def detect_s2(ctx, since):
         else:
             set_targets(ctx, s, ["h1"], sw.t)
         s["reasons"].append(f"M5 {sw.kind} sweep of {sw.level.name} {ctx.fmt(sw.level.price)} inside the FVG on the {ny(sw.bar_t)} candle; "
-                            f"stop {stop_desc}.")
+                            f"stop {stop_desc}{stop_rule(ctx)}.")
         stage(s, "triggered", sw.t, "M5 liquidity sweep inside the FVG; entry at candle close", s["entry"])
         checklist(ctx, s, sw.t, (True, "FVG midpoint in the correct half"),
                   (True, f"{sw.level.name} {ctx.fmt(sw.level.price)} swept ({sw.kind})"))
@@ -371,9 +421,8 @@ def detect_s3(ctx, since):
             continue
         e, f = found
         ready_t = m5[max(f.k, e.j)].end
-        buf = ctx.cfg["buffer"]
         entry = f.near
-        stop = extreme - buf if _bull(d) else extreme + buf
+        stop = place_stop(ctx, d, extreme, entry, ready_t)
         if (entry <= stop) if _bull(d) else (entry >= stop):
             continue
         s["entry"], s["stop"] = ctx.fmt(entry), ctx.fmt(stop)
@@ -383,7 +432,8 @@ def detect_s3(ctx, since):
             (entry < rng["mid"]) if _bull(d) else (entry > rng["mid"]),
             f"entry {ctx.fmt(entry)} vs H1 50% {ctx.fmt(rng['mid'])}")
         s["reasons"].append(f"M5 {e.kind} {d} on the {ny(m5[e.j].t)} candle (close {ctx.fmt(e.close)} beyond {ctx.fmt(e.level)}); "
-                            f"M5 FVG {ctx.fmt(f.low)}–{ctx.fmt(f.high)}: limit at its near edge {s['entry']}.")
+                            f"M5 FVG {ctx.fmt(f.low)}–{ctx.fmt(f.high)}: limit at its near edge {s['entry']}; "
+                            f"stop {s['stop']} beyond the sweep extreme {ctx.fmt(extreme)}{stop_rule(ctx)}.")
         stage(s, "limit", ready_t, f"Limit {'buy' if _bull(d) else 'sell'} at {s['entry']} (M5 FVG near edge)", s["entry"])
         checklist(ctx, s, ready_t, poi_ok, (True, f"{names} swept ({sw.kind})"))
         expire = ready_t + timedelta(minutes=5 * p["s3_fill_m5_bars"])
@@ -419,13 +469,12 @@ def detect_s4(ctx, since):
         if best is None:
             continue
         eq, gap, t0 = best
-        buf = ctx.cfg["buffer"]
         s = new_setup(ctx, "S4", d, "h1", "h1", t0, {
             "kind": "H1 FVG beyond equal " + ("highs" if side == "high" else "lows"), "tf": "h1",
             "low": ctx.fmt(f.low), "high": ctx.fmt(f.high), "formed": t0.isoformat(), "candle": hb[f.i].t.isoformat(),
             "eq_level": ctx.fmt(eq.price)})
         s["entry"] = ctx.fmt(f.near)
-        s["stop"] = ctx.fmt(f.far + buf if d == "bearish" else f.far - buf)
+        s["stop"] = place_stop(ctx, d, f.far, s["entry"], t0)
         set_targets(ctx, s, ["h1"], t0)
         s["reasons"] = [
             f"H1 equal {'highs' if side == 'high' else 'lows'} at {ctx.fmt(eq.price)} hold liquidity; "

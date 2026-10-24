@@ -26,7 +26,7 @@ const SID = decodeURIComponent(location.pathname.split('/').pop());
 let s, tf, chart;
 function btStat(x) { return x && x.trades ? `${x.trades} trades, ${x.win_rate}% wins, ${fmtR(x.avg_r)} avg, ${fmtR(x.total_r)} total` : 'no closed trades'; }
 function btLine(b) { return `<div class="small">${esc(s.setup)} all symbols: ${btStat(b.setup)}</div><div class="small">${esc(s.setup)} ${esc(s.symbol)}: ${btStat(b.setup_symbol)}</div><div class="small muted">${esc(b.period)} · <a href="/backtest">details</a></div>`; }
-const COLORS = { watch: '#58a6ff', armed: '#f0b429', limit: '#f0b429', triggered: '#a371f7', target: '#26a69a', stopped: '#ef5350', invalidated: '#8b98a8', expired: '#8b98a8', missed: '#8b98a8' };
+const COLORS = { watch: '#58a6ff', armed: '#f0b429', limit: '#f0b429', triggered: '#a371f7', breakeven_set: '#f0b429', target: '#26a69a', stopped: '#ef5350', breakeven: '#8b98a8', invalidated: '#8b98a8', expired: '#8b98a8', missed: '#8b98a8' };
 
 async function drawChart() {
   if (!chart) chart = makeChart(document.getElementById('chart'), DIGITS[s.symbol]);
@@ -55,7 +55,7 @@ async function load() {
   s = await api(`/api/setup/${encodeURIComponent(SID)}`);
   tf = tf || s.confirm_tf;
   document.title = `ICT Scanner — ${s.symbol} ${s.setup}`;
-  document.getElementById('title').innerHTML = `<a href="/symbol/${s.symbol}">${s.symbol}</a> ${s.setup} · ${esc(s.name)} ${arrow(s.dir)} ${stage(s.stage)} <span class="small muted">score ${s.score}/7</span>`;
+  document.getElementById('title').innerHTML = `<a href="/symbol/${s.symbol}">${s.symbol}</a> ${s.setup} · ${esc(s.name)} ${arrow(s.dir)} ${stage(s.stage)} ${gradeBadge(s)} <span class="small muted">score ${s.score}/7${s.grade_note ? ' · ' + esc(s.grade_note) : ''}${s.d1_state ? ' · D1 ' + esc(s.d1_state) : ''}</span>`;
   document.getElementById('reasons').innerHTML = s.reasons.map(r => `<li>${esc(r)}</li>`).join('');
   const rows = [['POI', `${esc(s.poi.kind)} <span class="mono">${s.poi.low} – ${s.poi.high}</span>`], ['Timeframes', `${s.poi_tf.toUpperCase()} → confirm ${s.confirm_tf.toUpperCase()}`],
     ['Entry', s.entry ?? '<span class="muted">waiting for confirmation</span>'], ['Stop', s.stop ?? '—'],

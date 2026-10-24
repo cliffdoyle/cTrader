@@ -6,6 +6,11 @@
 <main>
   <h1 id="title">…</h1>
   <div class="panel"><h3>Top-down read</h3><ul class="tight" id="narrative"></ul></div>
+  <h2 id="session-title">Today's key levels &amp; bias</h2>
+  <div class="grid cols-2">
+    <div class="panel"><table id="sess-levels"></table></div>
+    <div class="panel" id="sess-bias"></div>
+  </div>
   <h2>Chart</h2>
   <div class="panel">
     <div class="tabs" id="tf-tabs"></div>
@@ -25,8 +30,27 @@
 <script>
 startShell();
 const SYM = decodeURIComponent(location.pathname.split('/').pop());
-const LAYERS = { zones: 'W/D key levels', structure: 'Structure', pois: 'FVGs & order blocks', liquidity: 'Liquidity', setups: 'Active setups' };
-let snap, setups, tf = 'h1', on = { zones: true, structure: true, pois: true, liquidity: false, setups: true }, chart, data = [];
+const LAYERS = { session: "Today's levels", zones: 'W/D key levels', structure: 'Structure', pois: 'FVGs & order blocks', liquidity: 'Liquidity', setups: 'Active setups' };
+let snap, setups, tf = 'h1', on = { session: true, zones: false, structure: true, pois: true, liquidity: false, setups: true }, chart, data = [];
+
+function renderSession(s) {
+  if (!s || s.error) { document.getElementById('sess-levels').innerHTML = `<tr><td class="muted">${esc(s ? s.error : 'not available yet')}</td></tr>`; return; }
+  document.getElementById('session-title').innerHTML = `Today's key levels &amp; bias <span class="small muted">trading day ${esc(s.day)} (NY)</span>`;
+  const rows = s.levels.map(l => `<tr class="${l.untouched ? '' : 'muted'}"><td><b>${esc(l.name)}</b><div class="small muted">${esc(l.window)}</div></td>
+    <td class="mono">${l.price}</td><td class="mono small">${l.distance > 0 ? '+' : ''}${l.distance}</td>
+    <td class="small">${l.untouched ? '<span class="ok">untouched</span>' : 'taken ' + esc(nyShort(l.taken_t))}</td></tr>`).join('');
+  const op = s.opens || {};
+  document.getElementById('sess-levels').innerHTML = '<tr><th>Level</th><th>Price</th><th>From price</th><th>Status</th></tr>' + rows +
+    `<tr><td colspan="4" class="small muted">Midnight open ${op.midnight ?? '—'} · NY open ${op.ny_open ?? '—'}</td></tr>`;
+  const c = s.context, dr = c.draw;
+  const lp = v => (v === 'bullish' || v === 'bearish') ? pill(v) : `<span class="pill undefined">${esc(v)}</span>`;
+  document.getElementById('sess-bias').innerHTML = `<div class="card-title"><h3>Daily lean</h3>${lp(c.lean)}</div>
+    <div class="small muted" style="margin-bottom:6px">${c.bulls} bullish · ${c.bears} bearish inputs (lean needs a 2-vote margin)</div>
+    <table>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${lp(x.reading)}</td><td class="small muted">${esc(x.note)}</td></tr>`).join('')}</table>
+    ${dr ? `<p class="small" style="margin-top:8px"><b>Nearest liquidity:</b> above ${esc(dr.above)} ${dr.above_price} (+${dr.above_dist}) · below ${esc(dr.below)} ${dr.below_price} (−${dr.below_dist}).
+      Random-walk odds the upper one is hit first: <b>${dr.p_above_first}%</b>.</p>` : ''}
+    <p class="small muted">${esc(c.evidence)}</p>`;
+}
 
 function tfCard(t) {
   const ev = t.events.slice().reverse().map(e => `<li>${pill(e.dir)} <b>${e.kind}</b> ${esc(e.ny)} — close ${e.close} beyond ${e.level}</li>`).join('');
@@ -47,6 +71,12 @@ async function drawChart() {
   data = await api(`/api/bars/${SYM}/${tf}?n=400`);
   chart.series.setData(data); clearOverlays(chart);
   const t = snap.timeframes[tf];
+  if (on.session && snap.session && snap.session.levels) {
+    snap.session.levels.forEach(l => hline(chart, l.price, l.untouched ? (l.side === 'high' ? '#58a6ff' : '#f0b429') : '#4b5563', l.name, l.untouched ? 0 : 2, l.untouched ? 2 : 1));
+    const op = snap.session.opens || {};
+    hline(chart, op.midnight, '#a371f7', 'Midnight open', 3);
+    hline(chart, op.ny_open, '#d6dde6', 'NY open', 3);
+  }
   if (on.zones) snap.zones.slice(0, 4).forEach(z => zone(chart, z.low, z.high, z.tf === 'w1' ? '#a371f7' : '#d29922', `${z.tf.toUpperCase()} key ${z.strength}/5`));
   if (on.structure) {
     hline(chart, t.protected, '#58a6ff', `${tf.toUpperCase()} protected`, 0, 2);
@@ -81,11 +111,13 @@ async function load() {
   document.title = `ICT Scanner — ${SYM}`;
   document.getElementById('title').innerHTML = `${SYM} <span class="mono">${snap.price}</span> ${pill(snap.bias)} <span class="small muted">as of ${esc(snap.as_of_ny)} NY</span>`;
   document.getElementById('narrative').innerHTML = snap.narrative.map(l => `<li>${esc(l)}</li>`).join('');
+  renderSession(snap.session);
   document.getElementById('tfs').innerHTML = TFS.map(x => tfCard(snap.timeframes[x])).join('');
   document.getElementById('zones').innerHTML = '<tr><th>TF</th><th>Zone</th><th>Where</th><th>Strength</th><th>Criteria</th><th>Touches</th></tr>' +
     snap.zones.map(z => `<tr><td>${z.tf.toUpperCase()}</td><td class="mono">${z.low} – ${z.high}</td><td>${z.position}</td><td>${z.strength}/5</td>
       <td class="small">${Object.entries(z.criteria).map(([k, v]) => `<span class="${v ? 'ok' : 'na'}">${v ? '✓' : '·'}</span> ${k}`).join(' &nbsp; ')}</td><td>${z.touches}</td></tr>`).join('');
-  document.getElementById('setups').innerHTML = SETUP_HEAD + (setups.length ? setups.map(setupRow).join('') : '<tr><td colspan="7" class="muted">No setups in the last 7 days.</td></tr>');
+  const g = (d.show_grades || []).length && d.show_grades.length < 3 ? ` (grade ${d.show_grades.join('/')} only)` : '';
+  document.getElementById('setups').innerHTML = SETUP_HEAD + (setups.length ? setups.map(setupRow).join('') : `<tr><td colspan="7" class="muted">No setups${g} in the last 7 days.</td></tr>`);
   renderTabs(); drawChart();
 }
 load(); setInterval(load, 60000);

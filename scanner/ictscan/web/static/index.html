@@ -6,10 +6,13 @@
   <div id="banner"></div>
   <h1>Top-down overview</h1>
   <div class="panel"><table id="grid"></table>
-    <p class="small muted">Bias = 4H structure state. A-grade = 1H agrees. W1/D1 are shown for context; per the strategy they supply key levels, not direction.</p></div>
-  <h2>Active setups</h2>
-  <div class="panel"><table id="active"></table></div>
-  <h2>Recently closed</h2>
+    <p class="small muted">Bias = 4H structure state. Aligned = 1H agrees with the 4H. W1/D1 are shown for context; per the strategy they supply key levels, not direction.</p></div>
+  <h2 id="active-title">Active setups</h2>
+  <div class="panel"><table id="active"></table>
+    <p class="small muted"><b>A-grade</b> = with the 4H and 1H trend, daily trend not against it, POI at a weekly/daily key level, and every other check passes
+      (POI in the right half, liquidity swept, ≥2R room, ≥2R to TP1; checks still pending do not count against it). Check the economic calendar yourself — news is not checked.
+      Change <span class="mono">SHOW_GRADES</span> in config.py to list B/C setups too.</p></div>
+  <h2 id="recent-title">Recently closed</h2>
   <div class="panel"><table id="recent"></table></div>
   <p class="small muted">Alerts are <b>unvalidated</b> until the backtest is complete. Nothing here is trading advice; the scanner never places orders.</p>
 </main>
@@ -28,9 +31,12 @@ async function load() {
       `<tr><td><a href="/symbol/${r.symbol}"><b>${r.symbol}</b></a><div class="small muted">${esc(r.as_of_ny)} NY</div></td><td class="mono">${r.price}</td>
        ${TFS.map(t => `<td>${pill(r.states[t])}</td>`).join('')}
        <td>${r.h4_position ? `${r.h4_position.pct}% <span class="small muted">${r.h4_position.zone}</span>` : '—'}</td>
-       <td>${r.aligned && r.bias !== 'undefined' ? '<span class="ok">A-grade</span>' : '<span class="muted">pullback</span>'}</td>
+       <td>${r.aligned && r.bias !== 'undefined' ? '<span class="ok">aligned</span>' : '<span class="muted">pullback</span>'}</td>
        <td>${count[r.symbol] || 0}</td><td class="small read">${esc(r.narrative[r.narrative.length - 1] || '')}</td></tr>`).join('');
-  document.getElementById('active').innerHTML = SETUP_HEAD + (d.active.length ? d.active.map(setupRow).join('') : '<tr><td colspan="7" class="muted">No active setups.</td></tr>');
+  const g = (d.show_grades || []).length && d.show_grades.length < 3 ? ` (grade ${d.show_grades.join('/')} only)` : '';
+  document.getElementById('active-title').textContent = 'Active setups' + g;
+  document.getElementById('recent-title').textContent = 'Recently closed' + g;
+  document.getElementById('active').innerHTML = SETUP_HEAD + (d.active.length ? d.active.map(setupRow).join('') : `<tr><td colspan="7" class="muted">No active setups${g}.</td></tr>`);
   document.getElementById('recent').innerHTML = SETUP_HEAD + (d.recent.length ? d.recent.map(setupRow).join('') : '<tr><td colspan="7" class="muted">None yet.</td></tr>');
 }
 load(); setInterval(load, 30000);

@@ -114,3 +114,11 @@ Alerts show "x/7" plus the setup's backtest record (trades, win rate, average R)
 - W/D zones: a cluster never spans more than 2 × tolerance (stops zones chaining into very wide areas).
 - Event descriptions use the candle **open** time (as on cTrader charts); stage times are the deciding candle's close.
 - Stop buffer per symbol is a fixed estimate in `config.py` until live spreads are measured.
+- **Stop model v0.3 (2026-10-20, overrides "1 × spread" in §3 and the "+ buffer" in §4):** every stop sits beyond its
+  structural level by max(spread buffer, `stop_buffer_atr` 0.25 × H1 ATR) and at least `stop_min_atr` 1.0 × H1 ATR from
+  the entry; once price is +`be_at_r` 1R in favour the stop moves to the entry (final stage `breakeven`, 0R; a
+  `breakeven_set` alert is sent). Evidence: winners' adverse excursion p90 = 1.15 H1 ATR; stops < 0.25 ATR caused −193R of
+  −373R in the old baseline. Same-period engine backtest (2025-10-16 → 2026-08-05): old stops −0.222R/trade, worst −18R →
+  new −0.089R/trade, worst −1.25R; grade A +0.16R (26 trades), B −0.03R, C −0.12R. Chosen on Apr–Jun, confirmed on Jul–Sep.
+- **Grades** (2026-10-20): A = with H4 and H1, D1 not against, POI at a W/D level, no failed check; B = with H4 and D1 not
+  against; C = against H4 or D1. The dashboard shows `SHOW_GRADES` only.

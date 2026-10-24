@@ -6,13 +6,14 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from .config import MCP_ENDPOINT, PARAMS, REFRESH, SCAN_DELAY_SECONDS, SYMBOLS, TIMEFRAMES, WINDOW
+from .config import PARAMS, REFRESH, SCAN_DELAY_SECONDS, SYMBOLS, TIMEFRAMES, WINDOW
 from .data import parse, sync
 from .engine.context import Context
 from .engine.core import make_bars
 from .engine.setups import detect_all
 from .engine.topdown import topdown
-from .mcp import MCPClient, MCPUnavailable
+from .mcp import MCPUnavailable
+from .source import make_client, offline_hint
 
 log = logging.getLogger("ictscan.runner")
 
@@ -20,7 +21,7 @@ log = logging.getLogger("ictscan.runner")
 class Scanner:
     def __init__(self, store):
         self.store = store
-        self.client = MCPClient(MCP_ENDPOINT)
+        self.client = make_client()
         self.last_fetch = {}
         self.stop = threading.Event()
         self.scan_now = threading.Event()
@@ -33,6 +34,7 @@ class Scanner:
     def scan_once(self):
         t0 = time.time()
         server_now = parse(self.client.call("get_server_time")["utcTime"])
+        new_symbols = {sym for sym in SYMBOLS if self.store.last_bar_t(sym, "m5") is None}
         fetched = 0
         for sym in SYMBOLS:
             for tf in TIMEFRAMES:
@@ -56,7 +58,9 @@ class Scanner:
                     continue
                 ctx = Context(sym, bars, cfg, PARAMS)
                 self.store.save_snapshot(sym, topdown(ctx))
-                new_notes += self.store.save_setups(detect_all(ctx), quiet_before, offline_since)
+                # A newly added symbol's backfilled history is pre-marked as read, like the first ever scan.
+                quiet = server_now.isoformat() if sym in new_symbols else quiet_before
+                new_notes += self.store.save_setups(detect_all(ctx), quiet, offline_since)
             except Exception as e:  # one bad symbol must not stop the others
                 log.exception("analysis failed for %s", sym)
                 errors.append(f"{sym}: {e}")
@@ -78,8 +82,8 @@ class Scanner:
                 now = time.time()
                 wait = 300 - (now % 300) + SCAN_DELAY_SECONDS
             except MCPUnavailable as e:
-                self.health("offline", f"Waiting for cTrader (open it and enable the MCP server): {e}")
-                log.warning("cTrader offline: %s", e)
+                self.health("offline", f"{offline_hint()}: {e}")
+                log.warning("data source offline: %s", e)
                 wait = backoff
                 backoff = min(backoff * 2, 300)
             except Exception as e:

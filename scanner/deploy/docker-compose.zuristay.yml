@@ -1,0 +1,26 @@
+# Droplet 143.110.219.173: serve the dashboard at https://scanner.zuristay.com through the ZuriStay Caddy
+# (hotel-caddy-1 on network hotel_hotel). No host port is published; Caddy reaches the container as ictscan:8765.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.zuristay.yml up -d --build
+#
+# Caddyfile block to add ABOVE the *.zuristay.com block in /root/hotel-management-system/deploy/Caddyfile
+# (back it up first, then: docker exec hotel-caddy-1 caddy validate --config /etc/caddy/Caddyfile && \
+#                           docker exec hotel-caddy-1 caddy reload --config /etc/caddy/Caddyfile):
+#
+#   # --- ICT Scanner dashboard (password-protected by the app) ---
+#   scanner.zuristay.com {
+#   	encode zstd gzip
+#   	tls {
+#   		on_demand
+#   	}
+#   	reverse_proxy ictscan:8765
+#   }
+# (`tls on_demand` is required: next to the on-demand *.zuristay.com block, a plain site never got its certificate.)
+services:
+  ictscan:
+    ports: !reset []
+    networks: [default, hotel]
+
+networks:
+  hotel:
+    external: true
+    name: hotel_hotel

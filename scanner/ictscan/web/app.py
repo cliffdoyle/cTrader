@@ -1,23 +1,81 @@
 """Dashboard web app (FastAPI). Read-only views over the scanner store plus notification state."""
 from __future__ import annotations
 
+import base64
+import html
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from ..config import SYMBOLS, TIMEFRAMES
+from ..config import DASH_PASSWORD, DASH_USER, DATA_SOURCE, SHOW_GRADES, SYMBOLS, TIMEFRAMES
 from ..engine.core import TF_SECONDS
 
 STATIC = Path(__file__).parent / "static"
 ACTIVE = ("watch", "armed", "limit", "triggered")
 
 
+def _authorised(header):
+    if not header.startswith("Basic "):
+        return False
+    try:
+        user, _, pw = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+    except Exception:  # noqa: BLE001 — malformed header = not authorised
+        return False
+    return secrets.compare_digest(user, DASH_USER) and secrets.compare_digest(pw, DASH_PASSWORD)
+
+
+def _page(title, body):
+    return HTMLResponse(f"<!doctype html><meta charset='utf-8'><title>{html.escape(title)}</title>"
+                        f"<link rel='stylesheet' href='/static/style.css'><main><h1>{html.escape(title)}</h1>{body}"
+                        f"<p><a href='/'>Back to the dashboard</a></p></main>")
+
+
 def create_app(store, scanner=None):
     app = FastAPI(title="ICT Scanner", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    if DASH_PASSWORD:
+        @app.middleware("http")
+        async def basic_auth(request: Request, call_next):
+            if request.url.path == "/healthz" or _authorised(request.headers.get("authorization", "")):
+                return await call_next(request)
+            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="ICT Scanner"'})
+
+    @app.get("/healthz")
+    def healthz():
+        return PlainTextResponse("ok")
+
+    @app.get("/oauth/start")
+    def oauth_start():
+        from ..openapi import Credentials
+        creds = Credentials()
+        if not creds.app_ready:
+            return _page("cTrader Open API not configured", f"<p>Put CTRADER_CLIENT_ID and CTRADER_CLIENT_SECRET in "
+                         f"<code>{html.escape(str(creds.env_file))}</code> (or the server's environment), then reload this page.</p>")
+        return RedirectResponse(creds.authorize_url())
+
+    @app.get("/oauth/callback")
+    def oauth_callback(code: str = "", error: str = "", error_description: str = ""):
+        from ..openapi import Credentials
+        if error or not code:
+            return _page("Access not granted", f"<p>{html.escape(error_description or error or 'No authorisation code received.')}</p>"
+                         "<p><a href='/oauth/start'>Try again</a></p>")
+        creds = Credentials()
+        try:
+            creds.exchange_code(code)
+        except Exception as e:  # noqa: BLE001 — show the reason to the user
+            return _page("Could not complete the connection", f"<p>{html.escape(str(e))}</p><p><a href='/oauth/start'>Try again</a></p>")
+        client = getattr(scanner, "client", None)
+        if client is not None and hasattr(client, "request_reconnect"):
+            client.request_reconnect()
+            scanner.scan_now.set()
+        note = "" if DATA_SOURCE == "openapi" else "<p>This scanner still reads candles from the cTrader app (ICTSCAN_SOURCE=mcp); the tokens are saved for the server version.</p>"
+        until = datetime.fromtimestamp(creds.expires_at, timezone.utc).strftime("%d %b %Y")
+        return _page("Connected to cTrader", f"<p>Read-only access granted. The token is valid until {until} and renews automatically.</p>{note}")
 
     def page(name):
         return FileResponse(STATIC / name, headers={"Cache-Control": "no-store"})
@@ -52,17 +110,18 @@ def create_app(store, scanner=None):
                 "aligned": snap["aligned"], "states": {tf: tfs[tf]["state"] for tf in TIMEFRAMES},
                 "h4_position": tfs["h4"]["position"], "narrative": snap["narrative"],
             })
-        active = [s for s in store.setups(active_only=True, limit=200)]
-        recent = [s for s in store.setups(limit=60) if s["stage"] not in ACTIVE][:30]
-        return {"health": store.get_meta("health"), "unread": store.unread_count(), "symbols": rows,
-                "muted": store.get_meta("alerts_muted", False),
+        active = store.setups(active_only=True, limit=200, grades=SHOW_GRADES)
+        recent = [s for s in store.setups(limit=200, grades=SHOW_GRADES) if s["stage"] not in ACTIVE][:30]
+        return {"health": store.get_meta("health"), "unread": store.unread_count(SHOW_GRADES), "symbols": rows,
+                "muted": store.get_meta("alerts_muted", False), "show_grades": list(SHOW_GRADES),
                 "active": [brief(s) for s in active], "recent": [brief(s) for s in recent]}
 
     @app.get("/api/symbol/{sym}")
     def symbol(sym: str):
         if sym not in SYMBOLS:
             raise HTTPException(404, "unknown symbol")
-        return {"snapshot": store.snapshot(sym), "setups": [brief(s) for s in store.setups(symbol=sym, limit=80)]}
+        return {"snapshot": store.snapshot(sym), "show_grades": list(SHOW_GRADES),
+                "setups": [brief(s) for s in store.setups(symbol=sym, limit=80, grades=SHOW_GRADES)]}
 
     @app.get("/api/bars/{sym}/{tf}")
     def bars(sym: str, tf: str, n: int = 300, end: int | None = None):
@@ -102,17 +161,19 @@ def create_app(store, scanner=None):
 
     @app.get("/api/notifications")
     def notifications(after_id: int = 0, limit: int = 100, unread: bool = False):
-        return {"items": store.notifications(after_id, limit, unread), "unread": store.unread_count(),
+        return {"items": store.notifications(after_id, limit, unread, SHOW_GRADES), "unread": store.unread_count(SHOW_GRADES),
                 "muted": store.get_meta("alerts_muted", False)}
 
     @app.post("/api/notifications/read")
     def mark_read(ids: list[int] | None = Body(default=None, embed=True)):
         store.mark_read(ids)
-        return {"unread": store.unread_count()}
+        return {"unread": store.unread_count(SHOW_GRADES)}
 
     @app.get("/api/health")
     def health():
-        return {"health": store.get_meta("health"), "server_time": datetime.now(timezone.utc).isoformat()}
+        client = getattr(scanner, "client", None)
+        return {"health": store.get_meta("health"), "server_time": datetime.now(timezone.utc).isoformat(),
+                "source": DATA_SOURCE, "account": getattr(client, "info", None) or None}
 
     @app.post("/api/scan")
     def scan_now():
@@ -126,7 +187,7 @@ def create_app(store, scanner=None):
 
 def brief(s):
     keys = ("id", "symbol", "setup", "name", "dir", "poi_tf", "confirm_tf", "stage", "stage_t", "key_t", "entry", "stop",
-            "tp1", "tp1_name", "rr", "result_r", "score")
+            "tp1", "tp1_name", "rr", "result_r", "score", "grade", "grade_note")
     out = {k: s.get(k) for k in keys}
     out["poi"] = {k: s["poi"].get(k) for k in ("kind", "low", "high")}
     out["last_note"] = s["timeline"][-1]["note"] if s["timeline"] else ""

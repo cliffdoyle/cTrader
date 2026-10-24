@@ -10,7 +10,16 @@ SYMBOLS = {
     "GBPUSD": {"pip": 0.0001, "unit": "pips", "digits": 5, "buffer": 0.00015},
     "XAUUSD": {"pip": 0.01, "unit": "pips", "digits": 2, "buffer": 0.25},
     "GBPJPY": {"pip": 0.01, "unit": "pips", "digits": 3, "buffer": 0.02},
+    "US500": {"pip": 1.0, "unit": "pts", "digits": 1, "buffer": 0.6},
+    "AUDUSD": {"pip": 0.0001, "unit": "pips", "digits": 5, "buffer": 0.0001},
+    "USDCAD": {"pip": 0.0001, "unit": "pips", "digits": 5, "buffer": 0.00015},
+    "USDJPY": {"pip": 0.01, "unit": "pips", "digits": 3, "buffer": 0.015},
 }
+
+# Setup grades listed on the dashboard and in notifications (see engine/setups.py `grade`).
+# A = with the 4H and 1H trend, daily not against it, POI at a W/D key level, and every other check passes.
+# Use ("A", "B", "C") to list everything again.
+SHOW_GRADES = ("A",)
 
 TIMEFRAMES = ("w1", "d1", "h4", "h1", "m15", "m5")
 # Bars kept in memory per scan (the cache in SQLite can hold more).
@@ -45,6 +54,11 @@ PARAMS = {
     "s1_stop": "leg",          # leg = confirmation-TF leg extreme | ob_far = beyond the order block's far edge
     "s2_stop": "sweep",        # sweep = beyond the M5 sweep extreme | protected = beyond the H1 protected level
     "tp_mode": "liquidity",    # liquidity = nearest opposing liquidity | fixed_2r = 2 × risk
+    # Stop placement (stop study 2026-10-20): stop goes beyond the structural level by stop_buffer_atr × H1 ATR
+    # (never less than the spread buffer) and at least stop_min_atr × H1 ATR from the entry. 0 / 0 = old tight stops.
+    "stop_buffer_atr": 0.25,
+    "stop_min_atr": 1.0,
+    "be_at_r": 1.0,            # move the stop to the entry once price has gone this many R in favour (0 = off)
     "enabled_setups": ["S1", "S2", "S3", "S4"],
 }
 
@@ -52,6 +66,12 @@ DATA_DIR = Path(os.environ.get("ICTSCAN_DATA", Path(os.environ.get("LOCALAPPDATA
 DB_PATH = DATA_DIR / "ictscan.db"
 LOG_PATH = DATA_DIR / "ictscan.log"
 MCP_ENDPOINT = os.environ.get("ICTSCAN_MCP", "http://127.0.0.1:9876/mcp/")
+# Where candles come from: "mcp" = cTrader desktop app on this PC; "openapi" = cTrader Open API (no desktop app needed,
+# e.g. on a server). Open API credentials go in DATA_DIR/openapi.env or environment variables (see openapi.py).
+DATA_SOURCE = os.environ.get("ICTSCAN_SOURCE", "mcp").lower()
 WEB_HOST = os.environ.get("ICTSCAN_HOST", "127.0.0.1")
 WEB_PORT = int(os.environ.get("ICTSCAN_PORT", "8765"))
+# Dashboard login (HTTP Basic). Required whenever the dashboard is reachable from the internet.
+DASH_USER = os.environ.get("ICTSCAN_USER", "admin")
+DASH_PASSWORD = os.environ.get("ICTSCAN_PASSWORD", "")
 SCAN_DELAY_SECONDS = 20  # wait after each M5 close so the broker has the closed candle

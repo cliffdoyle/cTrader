@@ -1,7 +1,7 @@
 // Shared helpers: New York time formatting, API access, header, notification polling (toasts + browser notifications).
 const NY_FMT = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const NY_SHORT = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
-const DIGITS = { NAS100: 1, US30: 1, EURUSD: 5, GBPUSD: 5, XAUUSD: 2, GBPJPY: 3 };
+const DIGITS = { NAS100: 1, US30: 1, US500: 1, EURUSD: 5, GBPUSD: 5, AUDUSD: 5, USDCAD: 5, USDJPY: 3, XAUUSD: 2, GBPJPY: 3 };
 const SYMBOLS = Object.keys(DIGITS);
 const TFS = ['w1', 'd1', 'h4', 'h1', 'm15', 'm5'];
 
@@ -12,6 +12,7 @@ function pill(state) { return `<span class="pill ${esc(state)}">${esc(state || '
 function stage(s) { return `<span class="stage ${esc(s)}">${esc(s)}</span>`; }
 function arrow(dir) { return dir === 'bullish' ? '<span class="bull">▲ long</span>' : '<span class="bear">▼ short</span>'; }
 function fmtR(r) { return r == null ? '' : (r > 0 ? '+' : '') + Number(r).toFixed(2) + 'R'; }
+function gradeBadge(s) { return s.grade ? `<span class="grade g${esc(s.grade)}" title="${esc(s.grade_note || '')}">${esc(s.grade)}</span>` : ''; }
 async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(`${r.status} ${path}`); return r.json(); }
 
 function renderHeader() {
@@ -74,6 +75,6 @@ function setupRow(s) {
     <td>${arrow(s.dir)}</td><td>${stage(s.stage)}<div class="small muted">${esc(s.last_ny)} NY</div></td>
     <td class="small">${esc(s.poi.kind)}<div class="mono">${s.poi.low} – ${s.poi.high}</div></td>
     <td class="small">${plan}${s.result_r != null ? `<div class="${s.result_r > 0 ? 'bull' : 'bear'}">${fmtR(s.result_r)}</div>` : ''}</td>
-    <td>${s.score}/7</td><td class="small">${esc(s.last_note)}</td></tr>`;
+    <td>${gradeBadge(s)} ${s.score}/7</td><td class="small">${esc(s.last_note)}</td></tr>`;
 }
-const SETUP_HEAD = '<tr><th>Setup</th><th>Dir</th><th>Stage</th><th>POI</th><th>Entry / Stop / TP1</th><th>Score</th><th>Latest</th></tr>';
+const SETUP_HEAD = '<tr><th>Setup</th><th>Dir</th><th>Stage</th><th>POI</th><th>Entry / Stop / TP1</th><th>Grade / score</th><th>Latest</th></tr>';
