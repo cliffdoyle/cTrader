@@ -22,6 +22,9 @@ SYMBOLS = {
 SHOW_GRADES = ("A",)
 # Setups whose notifications pop up even while the old S1–S4 alerts are muted (store meta "alerts_muted").
 ALERT_SETUPS = ("MMXM",)
+# What the dashboard shows (all symbols are still scanned and stored). Empty tuple = no restriction.
+DASHBOARD_SYMBOLS = ("NAS100", "US30", "US500")
+DASHBOARD_SETUPS = ("MMXM",)
 
 TIMEFRAMES = ("w1", "d1", "h4", "h1", "m15", "m5")
 # Bars kept in memory per scan (the cache in SQLite can hold more).

@@ -80,7 +80,17 @@ class Store:
                     new_notes += cur.rowcount
         return new_notes
 
-    def setups(self, symbol=None, active_only=False, limit=200, grades=None):
+    @staticmethod
+    def _filter(grades=None, symbols=None, kinds=None):
+        """SQL conditions on the setups table (grade, symbol, setup kind)."""
+        cond, args = [], []
+        for col, vals in (("json_extract(data, '$.grade')", grades), ("symbol", symbols), ("setup", kinds)):
+            if vals:
+                cond.append(f"{col} IN ({','.join('?' * len(vals))})")
+                args.extend(vals)
+        return cond, args
+
+    def setups(self, symbol=None, active_only=False, limit=200, grades=None, symbols=None, kinds=None):
         q, args = "SELECT data FROM setups", []
         cond = []
         if symbol:
@@ -88,9 +98,9 @@ class Store:
             args.append(symbol)
         if active_only:
             cond.append("stage IN ('watch','armed','limit','triggered')")
-        if grades:
-            cond.append(f"json_extract(data, '$.grade') IN ({','.join('?' * len(grades))})")
-            args.extend(grades)
+        fc, fa = self._filter(grades, symbols, kinds)
+        cond += fc
+        args += fa
         if cond:
             q += " WHERE " + " AND ".join(cond)
         q += " ORDER BY stage_t DESC LIMIT ?"
@@ -103,21 +113,21 @@ class Store:
             r = c.execute("SELECT data FROM setups WHERE id=?", (sid,)).fetchone()
         return json.loads(r[0]) if r else None
 
-    @staticmethod
-    def _grade_cond(grades):
-        if not grades:
+    @classmethod
+    def _note_cond(cls, grades=None, symbols=None, kinds=None):
+        cond, args = cls._filter(grades, symbols, kinds)
+        if not cond:
             return "", []
-        marks = ",".join("?" * len(grades))
-        return f" AND setup_id IN (SELECT id FROM setups WHERE json_extract(data, '$.grade') IN ({marks}))", list(grades)
+        return f" AND setup_id IN (SELECT id FROM setups WHERE {' AND '.join(cond)})", args
 
-    def notifications(self, after_id=0, limit=100, unread_only=False, grades=None):
-        gc, gargs = self._grade_cond(grades)
+    def notifications(self, after_id=0, limit=100, unread_only=False, grades=None, symbols=None, kinds=None):
+        gc, gargs = self._note_cond(grades, symbols, kinds)
         q = "SELECT * FROM notifications WHERE id>?" + (" AND read=0" if unread_only else "") + gc + " ORDER BY t DESC, id DESC LIMIT ?"
         with self._conn() as c:
             return [dict(r) for r in c.execute(q, (after_id, *gargs, limit)).fetchall()]
 
-    def unread_count(self, grades=None):
-        gc, gargs = self._grade_cond(grades)
+    def unread_count(self, grades=None, symbols=None, kinds=None):
+        gc, gargs = self._note_cond(grades, symbols, kinds)
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM notifications WHERE read=0" + gc, gargs).fetchone()[0]
 

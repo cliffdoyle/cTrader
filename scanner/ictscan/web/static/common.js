@@ -3,6 +3,9 @@ const NY_FMT = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', 
 const NY_SHORT = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const DIGITS = { NAS100: 1, US30: 1, US500: 1, EURUSD: 5, GBPUSD: 5, AUDUSD: 5, USDCAD: 5, USDJPY: 3, XAUUSD: 2, GBPJPY: 3 };
 const SYMBOLS = Object.keys(DIGITS);
+// Indices shown in the header (keep in sync with DASHBOARD_SYMBOLS in config.py).
+const NAV = ['NAS100', 'US30', 'US500'];
+const NAMES = { NAS100: 'Nasdaq 100', US30: 'Dow Jones 30', US500: 'S&P 500' };
 const TFS = ['w1', 'd1', 'h4', 'h1', 'm15', 'm5'];
 
 function ny(v) { if (v == null) return ''; const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v); return NY_FMT.format(d) + ' NY'; }
@@ -17,12 +20,14 @@ async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) t
 
 function renderHeader() {
   const h = document.createElement('header');
-  h.innerHTML = `<span class="brand">ICT Scanner</span>
-    <nav><a href="/">Overview</a>${SYMBOLS.map(s => `<a href="/symbol/${s}">${s}</a>`).join('')}<a href="/backtest">Backtest</a></nav>
+  const here = location.pathname;
+  const link = (href, label) => `<a href="${href}" class="${here === href ? 'on' : ''}">${label}</a>`;
+  h.innerHTML = `<a class="brand" href="/"><span class="logo">◆</span><span>ICT Scanner<small>Market maker models · US indices</small></span></a>
+    <nav>${link('/', 'Overview')}${NAV.map(s => link(`/symbol/${s}`, s)).join('')}</nav>
     <span class="spacer"></span>
     <span id="health" class="small muted"></span>
     <button class="btn" id="notif-perm" style="display:none">Enable pop-ups</button>
-    <a href="/notifications">🔔 <span id="unread" class="badge" style="display:none">0</span></a>`;
+    <a class="bell" href="/notifications" title="Notifications">🔔<span id="unread" class="badge" style="display:none">0</span></a>`;
   document.body.prepend(h);
   const btn = h.querySelector('#notif-perm');
   if ('Notification' in window && Notification.permission === 'default') {
@@ -69,12 +74,43 @@ async function pollNotifications() {
 
 function startShell() { renderHeader(); pollNotifications(); setInterval(pollNotifications, 20000); }
 
+function dirTag(dir) { return dir === 'bullish' ? '<span class="dirtag buy">▲ BUY</span>' : '<span class="dirtag sell">▼ SELL</span>'; }
+function modeChip(m) { return m ? `<span class="chip ${esc(m)}">${esc(m)}</span>` : ''; }
+function scoreBar(score, n) { n = n || 7; return `<span class="scorebar" title="${score}/${n} checks">${Array.from({ length: n }, (_, i) => `<i class="${i < score ? 'on' : ''}"></i>`).join('')}</span>`; }
+function rCell(r) { return r == null ? '<span class="muted">—</span>' : `<span class="res-r ${r > 0 ? 'bull' : 'bear'}">${fmtR(r)}</span>`; }
+
+function signalCard(s) {
+  const href = '/setup/' + encodeURIComponent(s.id);
+  return `<div class="sig-card ${esc(s.dir)}">
+    <div class="sig-top"><span class="sym">${esc(s.symbol)}</span>${dirTag(s.dir)}${modeChip(s.mode)}
+      <span class="right">${stage(s.stage)}</span></div>
+    <div class="sig-poi">${esc(s.poi.kind)} <span class="mono">${s.poi.low} – ${s.poi.high}</span></div>
+    <div class="levels">
+      <div class="lv entry"><div class="k">${s.dir === 'bullish' ? 'Buy limit' : 'Sell limit'}</div><div class="v mono">${s.entry ?? '—'}</div></div>
+      <div class="lv stop"><div class="k">Stop</div><div class="v mono">${s.stop ?? '—'}</div></div>
+      <div class="lv target"><div class="k">Target</div><div class="v mono">${s.tp1 ?? '—'}</div></div>
+    </div>
+    <div class="sig-meta"><span>R:R <b>${s.rr ?? '—'}</b></span><span>Checks ${scoreBar(s.score, s.checks)} <b>${s.score}/${s.checks || 7}</b></span>
+      ${s.smt ? `<span title="${esc(s.smt)}">SMT <b>✓</b></span>` : ''}</div>
+    <div class="sig-note"><span>${esc(s.last_note)}</span><span class="dim" style="white-space:nowrap">${esc(s.last_ny)} NY · <a href="${href}">details →</a></span></div>
+  </div>`;
+}
+
+function resultRow(s) {
+  return `<tr><td class="small muted" style="white-space:nowrap">${esc(s.first_ny || s.last_ny)}</td>
+    <td><a href="/setup/${encodeURIComponent(s.id)}"><b>${esc(s.symbol)}</b></a></td>
+    <td>${dirTag(s.dir)} ${modeChip(s.mode)}</td>
+    <td class="mono small">${s.entry ?? '—'} <span class="dim">/</span> ${s.stop ?? '—'} <span class="dim">/</span> ${s.tp1 ?? '—'}</td>
+    <td>${stage(s.stage)}</td><td>${rCell(s.result_r)}</td><td class="small muted">${esc(s.last_note)}</td></tr>`;
+}
+const RESULT_HEAD = '<tr><th>Signal (NY)</th><th>Index</th><th>Model</th><th>Entry / Stop / Target</th><th>Outcome</th><th>Result</th><th>Note</th></tr>';
+
 function setupRow(s) {
   const plan = s.entry != null ? `<span class="mono">${s.entry} / ${s.stop} / ${s.tp1}</span> <span class="muted">(${s.rr ?? '?'}R)</span>` : '<span class="muted">waiting for confirmation</span>';
-  return `<tr><td><a href="/setup/${encodeURIComponent(s.id)}">${esc(s.symbol)} ${esc(s.setup)}</a><div class="small muted">${esc(s.name)}</div></td>
-    <td>${arrow(s.dir)}</td><td>${stage(s.stage)}<div class="small muted">${esc(s.last_ny)} NY</div></td>
+  return `<tr><td><a href="/setup/${encodeURIComponent(s.id)}"><b>${esc(s.symbol)}</b></a> ${modeChip(s.mode)}<div class="small muted">${esc(s.name)}</div></td>
+    <td>${dirTag(s.dir)}</td><td>${stage(s.stage)}<div class="small muted">${esc(s.last_ny)} NY</div></td>
     <td class="small">${esc(s.poi.kind)}<div class="mono">${s.poi.low} – ${s.poi.high}</div></td>
-    <td class="small">${plan}${s.result_r != null ? `<div class="${s.result_r > 0 ? 'bull' : 'bear'}">${fmtR(s.result_r)}</div>` : ''}</td>
-    <td>${gradeBadge(s)} ${s.score}/7</td><td class="small">${esc(s.last_note)}</td></tr>`;
+    <td class="small">${plan}${s.result_r != null ? `<div>${rCell(s.result_r)}</div>` : ''}</td>
+    <td>${scoreBar(s.score, s.checks)} <span class="small">${s.score}/${s.checks || 7}</span></td><td class="small muted">${esc(s.last_note)}</td></tr>`;
 }
-const SETUP_HEAD = '<tr><th>Setup</th><th>Dir</th><th>Stage</th><th>POI</th><th>Entry / Stop / TP1</th><th>Grade / score</th><th>Latest</th></tr>';
+const SETUP_HEAD = '<tr><th>Signal</th><th>Direction</th><th>Stage</th><th>Reversal level</th><th>Entry / Stop / Target</th><th>Checks</th><th>Latest</th></tr>';
