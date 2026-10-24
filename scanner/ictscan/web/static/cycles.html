@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Time cycles (PXH / PXL)</title><link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script></head>
+<body>
+<main>
+  <div class="page-head">
+    <div><h1>Time cycles <span class="dim">· PXH / PXL</span></h1>
+      <div class="small muted">During each cycle price refers to the previous cycle's high (PXH), low (PXL) and 50 % (EQ).
+        Holding a broken level = continuation; losing it again = first warning of a reversal.</div></div>
+    <div class="tabs seg" id="sym-tabs"></div>
+  </div>
+
+  <div class="section-head"><h2>Order-flow matrix</h2><span class="count">current cycle vs the previous one · all three indices</span></div>
+  <div class="panel"><table class="matrix" id="matrix"></table></div>
+
+  <div class="section-head"><h2 id="cards-title">Cycles</h2><span class="count" id="cards-sub"></span></div>
+  <div class="cyc-grid" id="cards"></div>
+
+  <div class="section-head"><h2>Cycle chart</h2><span class="count" id="chart-sub"></span></div>
+  <div class="panel chart-panel">
+    <div class="chart-bar"><div class="tabs seg" id="kind-tabs"></div>
+      <div class="legend">
+        <span><i class="sw pxh"></i>PXH</span><span><i class="sw zone-h"></i>PXH candle</span><span><i class="sw eq"></i>EQ 50%</span>
+        <span><i class="sw zone-l"></i>PXL candle</span><span><i class="sw pxl"></i>PXL</span><span><i class="sw band"></i>cycle</span></div></div>
+    <div id="chart" class="chart"></div>
+    <p class="small dim" style="margin:8px 2px 0">Each shaded column is one cycle. The lines inside a cycle are the <b>previous</b> cycle's levels —
+      watch whether price holds or loses them. New York time.</p>
+    <p class="small muted" style="margin:6px 2px 0">On your cTrader chart: click inside the chart, then run
+      <span class="mono">python -m ictscan.draw_cycles <span id="cmd-sym">NAS100</span></span> on the PC (week · day · 90-min, 15 tidy objects; add
+      <span class="mono">--kinds month,week</span> to choose).</p>
+  </div>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/chart.js"></script>
+<script>
+startShell();
+const KINDS = [['90m', '90-min'], ['day', 'Day'], ['week', 'Week'], ['month', 'Month']];
+const STATE = {
+  holding_above_pxh: ['PXH held ▲', 'bullish'], pxh_failed: ['PXH failed ▼', 'bearish'],
+  holding_below_pxl: ['PXL held ▼', 'bearish'], pxl_failed: ['PXL failed ▲', 'bullish'],
+  inside: ['Inside range', 'mixed'], between: ['Between cycles', 'mixed'] };
+function posText(p) { return p == null ? '' : p < 0 ? 'below PXL' : p > 100 ? 'above PXH' : `${p}% of prev range`; }
+const params = new URLSearchParams(location.search);
+let sym = params.get('s') || 'NAS100', kind = params.get('k') || '90m', overview = null, chart = null, extra = [];
+
+function flowPill(r) { const [t, c] = STATE[r.state] || [r.state, 'mixed']; return `<span class="pill ${c}">${esc(t)}</span>`; }
+function hhmm(iso) { return NY_SHORT.format(new Date(iso)).split(', ').pop(); }
+function cycleWindow(k, c) {
+  if (!c) return '';
+  if (k === '90m') return `${hhmm(c.start)}–${hhmm(c.end)} NY`;
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', day: '2-digit', month: 'short' });
+  return `${f.format(new Date(c.start))} → ${f.format(new Date(c.end))}`;
+}
+
+function gauge(prev, price) {
+  const lo = Math.min(prev.low, price), hi = Math.max(prev.high, price), pad = (hi - lo) * 0.08 || 1;
+  const a = lo - pad, b = hi + pad, x = v => ((v - a) / (b - a) * 100).toFixed(2) + '%';
+  return `<div class="gauge">
+    <div class="g-track"><div class="g-disc" style="left:${x(prev.low)};width:calc(${x(prev.eq)} - ${x(prev.low)})"></div>
+      <div class="g-prem" style="left:${x(prev.eq)};width:calc(${x(prev.high)} - ${x(prev.eq)})"></div>
+      <i class="g-tick pxl" style="left:${x(prev.low)}"></i><i class="g-tick eq" style="left:${x(prev.eq)}"></i><i class="g-tick pxh" style="left:${x(prev.high)}"></i>
+      <span class="g-price" style="left:${x(price)}"><b class="mono">${price}</b></span></div>
+    <div class="g-labels"><span style="left:${x(prev.low)}">PXL</span><span style="left:${x(prev.eq)}">EQ</span><span style="left:${x(prev.high)}">PXH</span></div></div>`;
+}
+
+function cycleCard(k, label, c, price) {
+  if (!c) return `<div class="cyc-card"><div class="cyc-head"><b>${label}</b></div><div class="muted small">not enough data yet</div></div>`;
+  const p = c.prev, r = c.read;
+  const cur = c.current ? `<span class="chip">${esc(cycleWindow(k, c.current))}</span>` : `<span class="chip">next ${c.next_window ? hhmm(c.next_window) : '—'}</span>`;
+  return `<div class="cyc-card ${r.flow}">
+    <div class="cyc-head"><b>${label}</b>${cur}<span class="right">${flowPill(r)}</span></div>
+    ${gauge(p, price)}
+    <div class="lvls">
+      <div><span class="k pxh">PXH</span><span class="mono">${p.high}</span><span class="tiny dim">candle ${p.hi_zone[0]}–${p.hi_zone[1]}</span></div>
+      <div><span class="k eq">EQ</span><span class="mono">${p.eq}</span><span class="tiny dim">${price > p.eq ? 'price in premium' : 'price in discount'}</span></div>
+      <div><span class="k pxl">PXL</span><span class="mono">${p.low}</span><span class="tiny dim">candle ${p.lo_zone[0]}–${p.lo_zone[1]}</span></div>
+    </div>
+    <div class="cyc-note">${esc(r.note)}</div>
+    <div class="tiny dim">Previous cycle ${esc(cycleWindow(k, p))}${c.prev2 ? ` · cycle before: H <span class="mono">${c.prev2.high}</span> / L <span class="mono">${c.prev2.low}</span>` : ''}</div>
+  </div>`;
+}
+
+function renderTabs() {
+  document.getElementById('sym-tabs').innerHTML = NAV.map(s => `<button class="${s === sym ? 'on' : ''}" data-s="${s}">${s}</button>`).join('');
+  document.getElementById('kind-tabs').innerHTML = KINDS.map(([k, l]) => `<button class="${k === kind ? 'on' : ''}" data-k="${k}">${l}</button>`).join('');
+  document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { sym = b.dataset.s; sync(); renderAll(); drawChart(); });
+  document.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { kind = b.dataset.k; sync(); renderTabs(); drawChart(); });
+}
+function sync() { history.replaceState(null, '', `/cycles?s=${sym}&k=${kind}`); }
+
+function renderAll() {
+  renderTabs();
+  if (!overview) return;
+  const rows = overview.symbols.filter(r => !r.missing);
+  document.getElementById('matrix').innerHTML = `<tr><th>Index</th>${KINDS.slice().reverse().map(([, l]) => `<th>${l}</th>`).join('')}</tr>` +
+    rows.map(r => `<tr class="${r.symbol === sym ? 'sel' : ''}" data-row="${r.symbol}"><td><b>${r.symbol}</b><div class="tiny dim mono">${r.price}</div></td>${
+      KINDS.slice().reverse().map(([k]) => { const c = (r.cycles || {})[k]; return `<td>${c ? `${flowPill(c.read)}<div class="tiny dim">${posText(c.read.pos)}</div>` : '<span class="dim">—</span>'}</td>`; }).join('')}</tr>`).join('');
+  document.querySelectorAll('[data-row]').forEach(tr => tr.onclick = () => { sym = tr.dataset.row; sync(); renderAll(); drawChart(); });
+  const r = rows.find(x => x.symbol === sym);
+  document.getElementById('cards-title').textContent = `${sym} cycles`;
+  document.getElementById('cmd-sym').textContent = sym;
+  document.getElementById('cards-sub').textContent = r ? `price ${r.price} · as of ${r.as_of_ny} NY` : '';
+  document.getElementById('cards').innerHTML = r ? KINDS.slice().reverse().map(([k, l]) => cycleCard(k, l, (r.cycles || {})[k], r.price)).join('') : '';
+}
+
+const COL = { pxh: '#5aa9ff', pxl: '#f5b84a', eq: '#8a97a8' };
+function seg(times, price, color, width, style, title) {
+  const s = chart.chart.addLineSeries({ color, lineWidth: width, lineStyle: style, priceLineVisible: false, lastValueVisible: !!title,
+    title: title || '', crosshairMarkerVisible: false });
+  s.setData([{ time: times[0], value: price }, { time: times[1], value: price }]);
+  extra.push(s);
+}
+
+async function drawChart() {
+  const d = await api(`/api/cycles/${sym}?kind=${kind}&n=8`);
+  if (!chart) chart = makeChart(document.getElementById('chart'), d.digits ?? DIGITS[sym]);
+  chart.series.applyOptions({ priceFormat: { type: 'price', precision: d.digits, minMove: Math.pow(10, -d.digits) } });
+  extra.forEach(s => chart.chart.removeSeries(s)); extra = [];
+  chart.series.setData(d.bars); chart.series.setMarkers([]);
+  document.getElementById('chart-sub').textContent = `${sym} · ${KINDS.find(x => x[0] === kind)[1]} cycles on ${d.tf.toUpperCase()} · last ${d.cycles.length}`;
+  const cyc = d.cycles.map(c => ({ ...c, s: Date.parse(c.start) / 1000, e: Date.parse(c.end) / 1000 }));
+  const bg = chart.chart.addHistogramSeries({ priceScaleId: 'bg', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+  chart.chart.priceScale('bg').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+  bg.setData(d.bars.map(b => { const i = cyc.findIndex(c => b.time >= c.s && b.time < c.e);
+    return { time: b.time, value: 1, color: i < 0 ? 'rgba(0,0,0,0)' : (i % 2 ? 'rgba(90,169,255,0.055)' : 'rgba(155,123,255,0.04)') }; }));
+  extra.push(bg);
+  const marks = [];
+  cyc.forEach((c, i) => {
+    const inside = d.bars.filter(b => b.time >= c.s && b.time < c.e);
+    if (!inside.length || !c.px) return;
+    const t = [inside[0].time, inside[inside.length - 1].time], last = i === cyc.length - 1;
+    seg(t, c.px.hi_zone[0], 'rgba(90,169,255,0.45)', 1, 2);
+    seg(t, c.px.lo_zone[1], 'rgba(245,184,74,0.45)', 1, 2);
+    seg(t, c.px.eq, COL.eq, 1, 1, last ? 'EQ' : '');
+    seg(t, c.px.high, COL.pxh, 2, 0, last ? 'PXH' : '');
+    seg(t, c.px.low, COL.pxl, 2, 0, last ? 'PXL' : '');
+    if (last) {
+      const at = iso => barTimeAt(d.bars, Math.floor(Date.parse(iso) / 1000));
+      const th = at(c.px.high_t), tl = at(c.px.low_t);
+      if (th) marks.push({ time: th, position: 'aboveBar', color: COL.pxh, shape: 'arrowDown', text: 'PXH' });
+      if (tl) marks.push({ time: tl, position: 'belowBar', color: COL.pxl, shape: 'arrowUp', text: 'PXL' });
+    }
+  });
+  chart.series.setMarkers(marks.sort((a, b) => a.time - b.time));
+  chart.chart.timeScale().fitContent();
+}
+
+async function load() { overview = await api('/api/overview'); setUnread(overview.unread); setHealth(overview.health); renderAll(); }
+renderTabs(); load().then(drawChart); setInterval(load, 60000);
+</script>
+</body></html>

@@ -12,8 +12,9 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 
 from ..config import (ALERT_SETUPS, DASH_PASSWORD, DASH_USER, DASHBOARD_SETUPS, DASHBOARD_SYMBOLS, DATA_SOURCE, SHOW_GRADES,
-                      SYMBOLS, TIMEFRAMES)
-from ..engine.core import TF_SECONDS
+                      SYMBOLS, TIMEFRAMES, WINDOW)
+from ..engine.core import TF_SECONDS, make_bars
+from ..engine.cycles import KIND_TF, chart_cycles
 
 STATIC = Path(__file__).parent / "static"
 ACTIVE = ("watch", "armed", "limit", "triggered")
@@ -99,6 +100,26 @@ def create_app(store, scanner=None):
     def notifications_page():
         return page("notifications.html")
 
+    @app.get("/cycles")
+    def cycles_page():
+        return page("cycles.html")
+
+    @app.get("/api/cycles/{sym}")
+    def cycles(sym: str, kind: str = "90m", n: int = 8):
+        if sym not in SYMBOLS or kind not in KIND_TF:
+            raise HTTPException(404, "unknown symbol/cycle")
+        tf = KIND_TF[kind]
+        bars = make_bars(store.load_bars(sym, tf, WINDOW[tf]), tf)
+        if not bars:
+            return {"tf": tf, "bars": [], "cycles": []}
+        digits = SYMBOLS[sym]["digits"]
+        now = bars[-1].end
+        cyc = chart_cycles(bars, kind, now, max(1, min(n, 30)), lambda v: round(v, digits))
+        t0 = datetime.fromisoformat(cyc[0]["px"]["start"] if cyc and "px" in cyc[0] else cyc[0]["start"]) if cyc else bars[0].t
+        shown = [b for b in bars if b.t >= t0]
+        return {"tf": tf, "kind": kind, "digits": digits, "cycles": cyc,
+                "bars": [{"time": int(b.t.timestamp()), "open": b.o, "high": b.h, "low": b.l, "close": b.c} for b in shown]}
+
     @app.get("/api/overview")
     def overview():
         rows = []
@@ -113,7 +134,7 @@ def create_app(store, scanner=None):
                 "symbol": sym, "price": snap["price"], "as_of_ny": snap["as_of_ny"], "bias": snap["bias"],
                 "aligned": snap["aligned"], "states": {tf: tfs[tf]["state"] for tf in TIMEFRAMES},
                 "h4_position": tfs["h4"]["position"], "narrative": snap["narrative"],
-                "lean": ctx.get("lean"), "draw": ctx.get("draw"),
+                "lean": ctx.get("lean"), "draw": ctx.get("draw"), "cycles": snap.get("cycles"),
             })
         active = store.setups(active_only=True, limit=200, **FILT)
         closed = [s for s in store.setups(limit=1000, **FILT) if s["stage"] not in ACTIVE]

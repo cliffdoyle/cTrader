@@ -70,6 +70,18 @@ swing version with the stop beyond the reversal extreme was the only one positiv
 The dashboard shows only NAS100/US30/US500 and only MMXM signals (`DASHBOARD_SYMBOLS` / `DASHBOARD_SETUPS` in
 `config.py`; set them to `()` to show everything again — all symbols are still scanned).
 
+## Time cycles (PXH / PXL)
+`engine/cycles.py` (after Frank369's time-cycle lecture) builds New York-time cycles — month (D1), week (H4), trading day
+(H1) and the six 90-minute windows 07:00–16:00 (M5) — and for the previous cycle gives PXH, PXL, EQ (50 %) and the full
+range of the candle that made the high/low. The current cycle is read against it: **PXH held / PXH failed / PXL held /
+PXL failed / inside** (holding = price stays beyond the level or inside its candle; failing = closes back through the
+candle — a first warning only). Dashboard page **Time cycles** (`/cycles`): order-flow matrix for the three indices,
+cycle cards with a PXL–EQ–PXH gauge, and a chart with shaded cycles and each previous cycle's levels drawn only across
+the following cycle. On cTrader: `python -m ictscan.draw_cycles NAS100 [--kinds month,week,day,90m] [--dry-run]`
+draws PXH/PXL (solid) and EQ (dotted) across the current cycle with short labels, one colour per cycle (week purple,
+day blue, 90-min amber, month white), replacing only its own previous drawing. `--boxes` instead draws the latest day's
+six 90-minute windows as boxes (window high→low, AM amber / PM blue) with a start-time label (12 objects, own record file).
+
 ## Today's key levels and daily lean
 `engine/session.py` adds, for every symbol, the current New York trading day's (rolls at 17:00 NY) key levels — PWH/PWL,
 PDH/PDL, Asia (20:00–00:00), London (02:00–05:00) and New York AM (09:30–11:30) highs/lows, midnight and 09:30 opens — with

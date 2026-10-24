@@ -23,7 +23,7 @@ function renderHeader() {
   const here = location.pathname;
   const link = (href, label) => `<a href="${href}" class="${here === href ? 'on' : ''}">${label}</a>`;
   h.innerHTML = `<a class="brand" href="/"><span class="logo">◆</span><span>ICT Scanner<small>Market maker models · US indices</small></span></a>
-    <nav>${link('/', 'Overview')}${NAV.map(s => link(`/symbol/${s}`, s)).join('')}</nav>
+    <nav>${link('/', 'Overview')}${link('/cycles', 'Time cycles')}${NAV.map(s => link(`/symbol/${s}`, s)).join('')}</nav>
     <span class="spacer"></span>
     <span id="health" class="small muted"></span>
     <button class="btn" id="notif-perm" style="display:none">Enable pop-ups</button>

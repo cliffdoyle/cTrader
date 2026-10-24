@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .core import dealing_range
+from .cycles import cycle_summary
 from .session import session_summary
 from .setups import ny
 
@@ -78,11 +79,15 @@ def topdown(ctx):
         sess = session_summary(ctx)
     except Exception as e:  # noqa: BLE001 — the session panel must never break the scan
         sess = {"error": str(e)}
+    try:
+        cyc = cycle_summary(ctx.bars, ctx.now, ctx.price, ctx.fmt)
+    except Exception as e:  # noqa: BLE001
+        cyc = {"error": str(e)}
     return {
         "symbol": ctx.symbol, "price": ctx.fmt(ctx.price), "as_of": ctx.now.isoformat(), "as_of_ny": ny(ctx.now),
         "bias": tfs["h4"]["state"], "aligned": tfs["h1"]["state"] == tfs["h4"]["state"],
         "zones": [{**z, "low": ctx.fmt(z["low"]), "high": ctx.fmt(z["high"]), "mid": ctx.fmt(z["mid"]),
                    "distance": ctx.fmt(z["distance"])} for z in ctx.zones[:8]],
-        "timeframes": tfs, "narrative": narrative(ctx, tfs), "session": sess,
+        "timeframes": tfs, "narrative": narrative(ctx, tfs), "session": sess, "cycles": cyc,
         "unit": ctx.cfg["unit"], "pip": ctx.cfg["pip"],
     }
