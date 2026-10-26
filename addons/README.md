@@ -1,9 +1,19 @@
 # Chart add-ons: ICT Scanner Levels (cTrader + MT5)
 
-Draw the scanner's levels on your own charts without the cTrader MCP: 90-minute session boxes (translucent fill, one
-colour per window), previous-cycle PXH / PXL / EQ, session levels and the SMT read. Both add-ons download the scanner's
-read-only feed (`https://scanner.zuristay.com/api/feed/<symbol>`, built from the cTrader Open API data on the server)
-every 60 seconds and redraw. They **only draw** — no trading code — and only touch objects named `ICTS_…`.
+Draw the scanner's levels on your own charts without the cTrader MCP:
+- **Asia (20:00–00:00 NY) and London (02:00–05:00 NY) boxes**: light shading with "ASIA H …" / "L …" printed. A dotted line
+  runs right from each high/low until price takes it ("swept 07:50").
+- **90-minute boxes** (07:00 → 14:30 NY), one colour per window, with their high and low printed.
+- **PXH / PXL / EQ** of the previous week, day and 90-minute cycle; labels sit in the empty space right of the candles.
+- **SMT card** (dark box, top left by default; *SMT card position* moves it): the verdict, the bigger SMT (direction) and the 5m/15m SMT (timing) with each index's
+  HH/LH (or ✓/✗ took the level), and which index to trade. On the chart, one line joins this index's two swing points.
+
+Analysis stays on the website; the chart only shows levels and the SMT read. Both add-ons download the scanner's
+read-only feed (`https://scanner.zuristay.com/api/feed/<symbol>`, built on the server from the cTrader Open API data)
+every 60 seconds and redraw. They run on your PC inside cTrader / MT5 and are separate from the scanner (which runs 24/7
+on the server). They work with **any broker** that offers these symbols (Pepperstone not required): the data
+comes from the scanner, symbol names are mapped and prices are aligned to your broker. They **only draw**: there is no trading code, and they only touch their own `ICTS…` objects. Use **one
+copy per chart**.
 
 You need the **feed key** (read-only, not the dashboard password): it is in `%LOCALAPPDATA%\ictscan\feed-key.txt` on the
 PC and in the server's `deploy/.env` as `ICTSCAN_FEED_TOKEN`.
@@ -25,8 +35,10 @@ MT5 allows web requests only in Expert Advisors, so this is an EA — it contain
 |---|---|---|
 | Scanner symbol | blank | blank = the chart's symbol; broker names (USTEC, US30.cash, SPX500m…) are mapped automatically |
 | Refresh every | 60 s | how often the feed is downloaded |
-| 90-minute boxes / PXH-PXL / Session levels / SMT | on / on / off / on | what to draw |
+| Asia + London boxes / 90-minute boxes / PXH-PXL / Session levels / SMT | on / on / on / off / on | what to draw |
+| Session times | KillZones | KillZones (gap 00:00–02:00) or Continuous (Asia until 02:00) |
 | Cycles | week,day,90m | which PXH/PXL cycles (month,week,day,90m) |
+| SMT card position | TopLeft | corner for the SMT card (cTrader) |
 | Align prices to this broker | on | shifts levels by the difference between your broker's and Pepperstone's price on the last 5-min bar (0 on Pepperstone) |
 
 ## Build

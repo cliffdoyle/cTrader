@@ -234,7 +234,8 @@ def create_app(store, scanner=None):
         return store.get_meta("smt") or {}
 
     @app.get("/api/feed/{sym}")
-    def feed(sym: str, request: Request, token: str = "", groups: str = "boxes,cycles,levels,smt", kinds: str = ""):
+    def feed(sym: str, request: Request, token: str = "", groups: str = "sessions,boxes,cycles,smt", kinds: str = "",
+             sess: str = "kz"):
         """Drawing instructions for the chart add-ons (see ictscan/feed.py). Read-only."""
         from ..feed import GROUPS, build_feed, resolve
         given = token or request.headers.get("x-feed-token", "")
@@ -247,7 +248,8 @@ def create_app(store, scanner=None):
         gs = [g for g in groups.split(",") if g in GROUPS] or list(GROUPS)
         ks = [k for k in kinds.split(",") if k in ("month", "week", "day", "90m")] or None
         try:
-            return PlainTextResponse(build_feed(store, target, gs, ks), headers={"Cache-Control": "no-store"})
+            return PlainTextResponse(build_feed(store, target, gs, ks, "full" if sess == "full" else "kz"),
+                                     headers={"Cache-Control": "no-store"})
         except ValueError as e:
             return PlainTextResponse(f"#ERR|data|{e}\n", status_code=503)
 

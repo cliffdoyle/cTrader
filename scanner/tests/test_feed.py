@@ -21,7 +21,12 @@ class FeedFormatTests(unittest.TestCase):
         out = to_lines("g", objs, lambda v: round(v, 1))
         self.assertEqual(out[0], "R|g|g0|1793012400|10.0|1793017800|9.0|26F5B84A|1|1|solid|0|")
         self.assertEqual(out[1], "L|g|g1|1793012400|5|1793016000|5|FF5AA9FF|0|2|dot|1|")
-        self.assertEqual(out[2], "T|g|g2|1793012400|7|||FFFFFFFF|0|1|solid|0|a/b")
+        self.assertEqual(out[2], "T|g|g2|1793012400|7|||FFFFFFFF|0|1|above|0|a/b")
+        more = to_lines("s", [({"object_type": "panel", "color": "#FF5C6C", "text": "▼ BEARISH SMT"}, None, None),
+                              ({"object_type": "text", "price1": 9, "time1": "2026-10-26T11:00:00Z", "color": "#FFFFFF",
+                                "anchor": "middle", "right": True, "text": "D PXH 9"}, None, None)], lambda v: v)
+        self.assertEqual(more[0], "P|s|s0|0|0|||FFFF5C6C|0|1|above|0|▼ BEARISH SMT")
+        self.assertEqual(more[1], "T|s|s1|1793012400|9|||FFFFFFFF|0|1|middle|1|D PXH 9")
 
 
 class FeedEndpointTests(unittest.TestCase):

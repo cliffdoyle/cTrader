@@ -61,8 +61,8 @@ def plan(ctx, kinds):
         if placed and placed[-1] - y < gap:
             y = placed[-1] - gap
         placed.append(y)
-        objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(ctx.now), "color": lab["color"],
-                      "text": f"{' · '.join(lab['tags'])} {lab['side']} {lab['price']}"}, None, None))
+        objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(ctx.now), "color": lab["color"], "right": True,
+                      "anchor": "middle", "text": f"{' · '.join(lab['tags'])} {lab['side']} {lab['price']}"}, None, None))
     return objs, lines
 
 
@@ -86,9 +86,11 @@ def plan_boxes(ctx, style="filled"):
         if style == "filled":
             objs.append(({**box, "color": f"#{FILL_ALPHA}{rgb}", "fill": True}, None, None))
         objs.append(({**box, "color": f"#{LINE_ALPHA}{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
-        rng = ctx.fmt(c["high"] - c["low"])
-        objs.append(({"object_type": "text", "price1": ctx.fmt(c["high"] + pad), "time1": iso(c["start"]), "color": f"#{rgb}",
-                      "text": f"{start_ny} · {rng}{' …' if forming else ''}"}, None, None))
+        pad2 = ctx.atr["h1"][-1] * 0.03
+        objs.append(({"object_type": "text", "price1": ctx.fmt(c["high"] + pad2), "time1": iso(c["start"]), "color": f"#{rgb}",
+                      "anchor": "above", "text": f"{start_ny}  H {ctx.fmt(c['high'])}{' …' if forming else ''}"}, None, None))
+        objs.append(({"object_type": "text", "price1": ctx.fmt(c["low"] - pad2), "time1": iso(c["start"]), "color": f"#{rgb}",
+                      "anchor": "below", "text": f"L {ctx.fmt(c['low'])}"}, None, None))
         lines.append(f"  {start_ny}–{c['end'].astimezone(NY):%H:%M} NY  high {ctx.fmt(c['high'])}  low {ctx.fmt(c['low'])}"
                      + ("  (forming)" if forming else ""))
     return objs, lines

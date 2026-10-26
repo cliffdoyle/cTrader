@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .config import DATA_DIR, DB_PATH, MCP_ENDPOINT, PARAMS, SYMBOLS, TIMEFRAMES, WINDOW
 from .data import parse, sync
@@ -23,7 +23,7 @@ from .engine.context import Context
 from .engine.core import make_bars
 from .mcp import MCPClient, MCPError
 
-KINDS = {"cycles": "cycles", "boxes": "cycleboxes", "levels": "levels", "smt": "smt"}
+KINDS = {"cycles": "cycles", "boxes": "cycleboxes", "sessions": "sessions", "levels": "levels", "smt": "smt"}
 LOCK = threading.Lock()  # one drawing at a time (the MCP acts on the single active chart)
 
 
@@ -115,7 +115,7 @@ def load_ctx(client, store, symbol, sync_tfs=TIMEFRAMES):
     return Context(symbol, bars, SYMBOLS[symbol], PARAMS)
 
 
-def plan_for(what, ctx, client, store, kinds=None, untouched_only=False):
+def plan_for(what, ctx, client, store, kinds=None, untouched_only=False, sess="kz"):
     """(header, objects, lines) — objects are (add_chart_object args, thickness, style)."""
     if what == "cycles":
         from .draw_cycles import plan
@@ -125,6 +125,9 @@ def plan_for(what, ctx, client, store, kinds=None, untouched_only=False):
         from .draw_cycles import plan_boxes
         objs, lines = plan_boxes(ctx)
         return "90-minute windows (filled session boxes, one colour per window)", objs, lines
+    if what == "sessions":
+        objs, lines = plan_sessions(ctx, sess)
+        return "Asia and London session boxes", objs, lines
     if what == "levels":
         from .draw_levels import plan_levels
         objs, lines = plan_levels(ctx, untouched_only)
@@ -143,38 +146,108 @@ def plan_for(what, ctx, client, store, kinds=None, untouched_only=False):
 
 
 SMT_COL = {"bearish": "#FF5C6C", "bullish": "#2BD4A4"}
+PANEL_TEXT, PANEL_DIM = "#E3E9F1", "#8A97A8"
+SESSION_COLORS = {"Asia": "4F8DFF", "London": "FF8A3D"}
+
+
+def _per_labels(summ, x):
+    """'NAS100 HH · US30 LH · US500 HH' for a swing SMT, 'NAS100 ✓ · US30 ✗ · US500 ✗' (took the level) for a cycle SMT."""
+    if x["source"] == "swing":
+        e = next((e for e in summ["swings"] if e["tf"] == x["tf"] and e["t2"] == x["t"]), None)
+        return " · ".join(f"{s} {p['label']}" for s, p in e["per"].items()) if e else ""
+    c = next((c for c in summ["cycles"] if c["kind"] == x["tf"]), None)
+    key = "took_high" if x["side"] == "bearish" else "took_low"
+    return " · ".join(f"{s} {'✓' if q[key] else '✗'}" for s, q in c["per"].items()) if c else ""
 
 
 def plan_smt(ctx, summ):
-    """Only what matters: the strongest SMT (direction) and the 5m/15m SMT that agrees with it (timing), short labels."""
+    """SMT for a chart: a corner panel (verdict, the direction and timing SMT with every index's high/low, what to trade)
+    plus one line between this index's two swing points of the timing SMT with a short "SMT" tag."""
     sym, atr = ctx.symbol, ctx.atr["h1"][-1]
     v = summ.get("verdict") or {}
+    b, t = v.get("bias"), v.get("trigger")
     objs, lines = [], []
-    for role, x in (("direction", v.get("bias")), ("timing", v.get("trigger"))):
-        if not x:
-            continue
-        col, bear = SMT_COL[x["side"]], x["side"] == "bearish"
-        arrow = "▼" if bear else "▲"
-        if x["source"] == "cycle":
-            c = next(c for c in summ["cycles"] if c["kind"] == x["tf"])
-            q = c["per"][sym]
-            px, t = (q["high"], q["high_t"]) if bear else (q["low"], q["low_t"])
-            word = ("took PXH" if bear else "took PXL") if sym in x["leaders"] else ("held PXH" if bear else "held PXL")
-            y = px + atr * 0.35 if bear else px - atr * 0.35
-            objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(parse(t)), "color": col,
-                          "text": f"{arrow} {x['name']} SMT ({word})"}, None, None))
-        else:
-            e = next(e for e in summ["swings"] if e["tf"] == x["tf"] and e["t2"] == x["t"])
-            p = e["per"][sym]
+
+    def panel(text, color):
+        objs.append(({"object_type": "panel", "color": color, "text": text}, None, None))
+
+    if not b:
+        panel("SMT · no divergence on the three indices", PANEL_DIM)
+        lines.append("  → " + v.get("summary", "no SMT"))
+        return objs, lines
+    bear = b["side"] == "bearish"
+    col = SMT_COL[b["side"]]
+    word = "highs" if bear else "lows"
+    panel(f"{'▼ BEARISH' if bear else '▲ BULLISH'} SMT  ·  divergence at the {word}", col)
+    took = "took PXH" if bear else "took PXL"
+    head = f"{b['name']} {'cycle' if b['source'] == 'cycle' else 'swing'}"
+    panel(f"{head}:  {_per_labels(summ, b)}" + (f"   ({took})" if b["source"] == "cycle" else ""), PANEL_TEXT)
+    if t:
+        panel(f"{t['name']} trigger {t['when'].split(' ')[-1]}:  {_per_labels(summ, t)}", PANEL_TEXT)
+    else:
+        panel("5m / 15m trigger:  waiting", PANEL_DIM)
+    panel(f"→ {'sell the weaker' if bear else 'buy the stronger'}:  {' / '.join(v.get('trade_on') or [])}"
+          + ("" if t else "  (after a 5m SMT)"), col)
+    if v.get("against"):
+        a = v["against"][0]
+        panel(f"⚠ {a['name']} SMT points {'down' if a['side'] == 'bearish' else 'up'}", "#F5B84A")
+    for role, x in (("direction", b), ("timing", t)):
+        if x:
+            lines.append(f"  {role:9} {x['name']:6} {x['side']:8} {x['when']} NY  {x['text']}")
+    if t and t["source"] == "swing":
+        e = next((e for e in summ["swings"] if e["tf"] == t["tf"] and e["t2"] == t["t"]), None)
+        p = e and e["per"].get(sym)
+        if p:
+            c = SMT_COL[t["side"]]
             objs.append(({"object_type": "trend_line", "price1": p["p1"], "time1": iso(parse(p["t1"])),
-                          "price2": p["p2"], "time2": iso(parse(p["t2"])), "color": col, "extend": False}, 2, "solid"))
-            y = p["p2"] + atr * 0.25 if bear else p["p2"] - atr * 0.25
-            objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(parse(p["t2"])), "color": col,
-                          "text": f"{arrow} {x['name']} SMT {p['label']}"}, None, None))
-        lines.append(f"  {role:9} {x['name']:6} {x['side']:8} {x['when']} NY  {x['text']}")
-    lines.append(f"  → {v.get('summary', 'no SMT')}")
+                          "price2": p["p2"], "time2": iso(parse(p["t2"])), "color": c, "extend": False}, 2, "solid"))
+            tbear = t["side"] == "bearish"
+            objs.append(({"object_type": "text", "price1": ctx.fmt(p["p2"] + (atr * 0.03 if tbear else -atr * 0.03)),
+                          "time1": iso(parse(p["t2"])), "color": c, "anchor": "above" if tbear else "below",
+                          "text": f"SMT {'▼' if tbear else '▲'} {p['label']}"}, None, None))
+    lines.append(f"  → {v.get('summary', '')}")
     return objs, lines
 
+
+def plan_sessions(ctx, style="kz"):
+    """Asia and London of the current trading day as light shaded boxes with their high/low printed, and a dotted line
+    from each high/low to the right until price takes it ("swept HH:MM").
+    style "kz" = ICT kill zones (Asia 20:00–00:00, London 02:00–05:00 NY; 00:00–02:00 is left empty on purpose);
+    style "full" = continuous (Asia 20:00–02:00 runs straight into London 02:00–05:00)."""
+    from .engine.session import NY as _NY, WINDOWS, _range, _taken, ny_time, trading_day
+    m5, now = ctx.bars["m5"], ctx.now
+    d = trading_day(now)
+    prev = d - timedelta(days=3 if d.weekday() == 0 else 1)
+    pad = ctx.atr["h1"][-1] * 0.03
+    objs, lines = [], []
+    windows = [(n, s, ((0, 2, 0) if style == "full" and n == "Asia" else e)) for n, s, e, _ in WINDOWS]
+    for name, (o0, h0, m0), (o1, h1, m1) in windows:
+        rgb = SESSION_COLORS.get(name)
+        if not rgb:
+            continue
+        day = d if now > ny_time(d, o0, h0, m0) else prev  # before Asia opens show the last finished one
+        t0, t1 = ny_time(day, o0, h0, m0), ny_time(day, o1, h1, m1)
+        r = _range(m5, t0, min(t1, now))
+        if not r:
+            continue
+        forming = now < t1
+        box = {"object_type": "rectangle", "price1": r["high"], "time1": iso(t0), "price2": r["low"], "time2": iso(t1)}
+        objs.append(({**box, "color": f"#1F{rgb}", "fill": True}, None, None))
+        objs.append(({**box, "color": f"#99{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
+        notes = {}
+        for side, price in (("high", r["high"]), ("low", r["low"])):
+            tk = None if forming else _taken(m5, side, price, t1, now)
+            notes[side] = f"  · swept {tk.astimezone(_NY):%H:%M}" if tk else ""
+            if not forming:
+                objs.append(({"object_type": "trend_line", "price1": price, "time1": iso(t1), "price2": price,
+                              "time2": iso(tk or now), "color": f"#B3{rgb}", "extend": False}, 1, "dots"))
+        objs.append(({"object_type": "text", "price1": ctx.fmt(r["high"] + pad), "time1": iso(t0), "color": f"#{rgb}",
+                      "anchor": "above", "text": f"{name.upper()}  H {ctx.fmt(r['high'])}{notes['high']}"}, None, None))
+        objs.append(({"object_type": "text", "price1": ctx.fmt(r["low"] - pad), "time1": iso(t0), "color": f"#{rgb}",
+                      "anchor": "below", "text": f"L {ctx.fmt(r['low'])}{notes['low']}"}, None, None))
+        lines.append(f"  {name:7} {t0.astimezone(_NY):%a %H:%M}–{t1.astimezone(_NY):%H:%M} NY  H {ctx.fmt(r['high'])}{notes['high']}"
+                     f"  L {ctx.fmt(r['low'])}{notes['low']}" + ("  (forming)" if forming else ""))
+    return objs, lines
 
 def draw(symbol, what, kinds=None, untouched_only=False, timeframe=None, dry_run=False, store=None, client=None):
     """Draw (or clear) one kind for one symbol. Returns a summary dict; raises DrawError / MCPError."""
@@ -212,8 +285,10 @@ def draw(symbol, what, kinds=None, untouched_only=False, timeframe=None, dry_run
         removed = _remove(client, chart, rec["charts"].get(chart.id, []))
         ids = []
         for obj, thick, style in objs:
+            if obj["object_type"] == "panel":  # corner panels exist only in the chart add-ons
+                continue
             chart.ensure()
-            res = client.call("add_chart_object", obj)
+            res = client.call("add_chart_object", {k: v for k, v in obj.items() if k not in ("anchor", "right")})
             oid = res.get("objectId", "")
             if not oid.startswith("MCP_"):
                 raise DrawError(f"Unexpected response: {res}")

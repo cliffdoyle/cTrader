@@ -13,13 +13,17 @@
 //| WebRequest for listed URL" and add https://scanner.zuristay.com  |
 //+------------------------------------------------------------------+
 #property copyright "ICT Scanner"
-#property version   "1.00"
+#property version   "1.20"
 #property description "Draws the ICT scanner's 90-min boxes, PXH/PXL and SMT. Never trades."
+
+enum SessionTimes { KillZones = 0, Continuous = 1 };
 
 input string InpUrl        = "https://scanner.zuristay.com"; // Scanner URL
 input string InpKey        = "";                            // Feed key
 input string InpSymbol     = "";                            // Scanner symbol (blank = this chart)
 input int    InpRefresh    = 60;                            // Refresh every (seconds)
+input bool   InpSessions   = true;                          // Asia + London boxes
+input SessionTimes InpSessStyle = KillZones;                // Session times (kill zones / continuous)
 input bool   InpBoxes      = true;                          // 90-minute boxes
 input bool   InpCycles     = true;                          // PXH / PXL levels
 input string InpKinds      = "week,day,90m";                // Cycles (month,week,day,90m)
@@ -55,6 +59,7 @@ void OnTimer() { Fetch(); }
 string Groups()
   {
    string g = "";
+   if(InpSessions) g += "sessions,";
    if(InpBoxes)  g += "boxes,";
    if(InpCycles) g += "cycles,";
    if(InpLevels) g += "levels,";
@@ -81,6 +86,11 @@ string UrlEncode(const string s)
 
 void Fetch()
   {
+   if(InpKey == "")
+     {
+      Status("ICT Scanner X paste the feed key (Inputs > Feed key)", clrIndianRed);
+      return;
+     }
    string groups = Groups();
    if(groups == "")
      {
@@ -92,7 +102,8 @@ void Fetch()
    string base = InpUrl;
    while(StringLen(base) > 0 && StringGetCharacter(base, StringLen(base) - 1) == '/')
       base = StringSubstr(base, 0, StringLen(base) - 1);
-   string url = base + "/api/feed/" + UrlEncode(sym) + "?groups=" + groups + "&kinds=" + UrlEncode(InpKinds) + "&token=" + UrlEncode(InpKey);
+   string url = base + "/api/feed/" + UrlEncode(sym) + "?groups=" + groups + "&kinds=" + UrlEncode(InpKinds)
+                + "&sess=" + (InpSessStyle == Continuous ? "full" : "kz") + "&token=" + UrlEncode(InpKey);
    char post[], result[];
    string headers;
    ResetLastError();
@@ -148,6 +159,7 @@ void Render(const string body)
    double offset = 0;
    string scanner_sym = "";
    long shift = ServerShift();
+   int panel_line = 0;
    for(int i = 0; i < n; i++)
      {
       string line = lines[i];
@@ -165,7 +177,31 @@ void Render(const string body)
       if(StringGetCharacter(line, 0) == '#' || k < 13)
          continue;
       string name = PREFIX + f[2];
-      if(Draw(name, f, k, offset, shift))
+      bool ok;
+      if(f[0] == "P")
+        {
+         if(panel_line == 0)
+           {
+            // card first, so the labels created after it are drawn on top
+            int rows = 0, chars = 0;
+            for(int q = i; q < n; q++)
+              {
+               if(StringFind(lines[q], "P|") != 0)
+                  continue;
+               string qf[];
+               int qk = StringSplit(lines[q], '|', qf);
+               rows++;
+               chars = MathMax(chars, qk >= 13 ? StringLen(qf[12]) : 0);
+              }
+            Card(rows, chars, HexToUint(f[7]));
+            ArrayResize(keep, kept + 1);
+            keep[kept++] = PREFIX + "card";
+           }
+         ok = PanelLine(name, panel_line++, f, k);
+        }
+      else
+         ok = Draw(name, f, k, offset, shift);
+      if(ok)
         {
          ArrayResize(keep, kept + 1);
          keep[kept++] = name;
@@ -228,13 +264,15 @@ bool Draw(const string name, string &f[], int k, double offset, long shift)
       string text = f[12];
       for(int i = 13; i < k; i++)
          text += "|" + f[i];
+      if(f[11] == "1")   // right of the last candle (empty space)
+         t1 = iTime(_Symbol, _Period, 0) + 2 * PeriodSeconds(_Period);
       if(ObjectFind(0, name) < 0 && !ObjectCreate(0, name, OBJ_TEXT, 0, t1, p1))
          return false;
       ObjectMove(0, name, 0, t1, p1);
       ObjectSetString(0, name, OBJPROP_TEXT, text);
       ObjectSetString(0, name, OBJPROP_FONT, "Arial");
       ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpFontSize);
-      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, f[10] == "below" ? ANCHOR_LEFT_UPPER : f[10] == "middle" ? ANCHOR_LEFT : ANCHOR_LEFT_LOWER);
       ObjectSetInteger(0, name, OBJPROP_COLOR, col);
      }
    else
@@ -242,6 +280,58 @@ bool Draw(const string name, string &f[], int k, double offset, long shift)
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
    return true;
+  }
+
+// SMT card: a dark box (OBJ_RECTANGLE_LABEL) with one label per line, top left below the chart title.
+#define CARD_X 10
+#define CARD_Y 30
+bool PanelLine(const string name, int line, string &f[], int k)
+  {
+   string text = f[12];
+   for(int i = 13; i < k; i++)
+      text += "|" + f[i];
+   ObjectDelete(0, name);   // re-create so the text is drawn on top of the card background
+   if(!ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0))
+      return false;
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, CARD_X + 12);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, CARD_Y + 8 + line * (InpFontSize + 9));
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetString(0, name, OBJPROP_FONT, line == 0 ? "Arial Bold" : "Arial");
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpFontSize);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, Rgb(HexToUint(f[7])));
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   return true;
+  }
+
+void Card(int lines, int max_chars, uint edge_argb)
+  {
+   string name = PREFIX + "card";
+   if(lines == 0)
+     {
+      ObjectDelete(0, name);
+      return;
+     }
+   ObjectDelete(0, name);
+   ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, CARD_X);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, CARD_Y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, (int)(max_chars * InpFontSize * 0.72) + 26);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, lines * (InpFontSize + 9) + 14);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, C'13,18,26');
+   ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, Rgb(edge_argb));
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+  }
+
+color Rgb(uint argb)
+  {
+   return (color)(((argb >> 16) & 255) | (((argb >> 8) & 255) << 8) | ((argb & 255) << 16));
   }
 
 // Seconds to add to UTC to get this broker's server time (chart time).

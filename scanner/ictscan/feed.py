@@ -1,12 +1,14 @@
 """Drawing feed for chart add-ons (cTrader indicator, MT5 expert) — the scanner's levels as plain drawing instructions.
 
-GET /api/feed/<symbol>?groups=boxes,cycles,levels,smt&kinds=week,day,90m&token=<ICTSCAN_FEED_TOKEN>
+GET /api/feed/<symbol>?groups=sessions,boxes,cycles,levels,smt&kinds=week,day,90m&token=<ICTSCAN_FEED_TOKEN>
 `symbol` may be a broker name (USTEC, US30.cash, SPX500…); it is mapped to a scanner symbol. Response is text/plain:
 
     #ICTSCAN|1|NAS100|<price>|<last M5 bar open, unix UTC>|<last M5 close>|<generated unix>
     <kind>|<group>|<id>|<t1>|<p1>|<t2>|<p2>|<AARRGGBB>|<fill 0/1>|<width>|<style>|<extend 0/1>|<text>
 
-kind R = rectangle, L = line, T = text (t2/p2 empty). Times are unix seconds UTC. style = solid | dash | dot.
+kind R = rectangle, L = line, T = text (t2/p2 empty), P = corner panel line (top-right, in order; no time/price).
+Times are unix seconds UTC. style = solid | dash | dot for R/L; for T/P it is the text anchor (above | below | middle)
+and extend = 1 means "place right of the last candle" (the add-on picks the time for its own timeframe).
 Plain text so MQL5 can parse it without a JSON library. The objects are exactly what the dashboard draw buttons make
 (`drawing.plan_for`), built from the scanner's stored candles — no cTrader desktop / MCP involved.
 """
@@ -21,7 +23,7 @@ from .config import PARAMS, SYMBOLS, TIMEFRAMES, WINDOW
 from .engine.context import Context
 from .engine.core import make_bars
 
-GROUPS = ("boxes", "cycles", "levels", "smt")
+GROUPS = ("sessions", "boxes", "cycles", "levels", "smt")
 ALIASES = {
     "NAS100": ("NAS100", "USTEC", "US100", "NDX", "NAS", "USTECH", "NASDAQ"),
     "US30": ("US30", "DJ30", "WS30", "DOW", "DJI", "USA30"),
@@ -64,20 +66,25 @@ def _clean(text):
 def to_lines(group, objs, fmt):
     out = []
     for i, (o, thick, style) in enumerate(objs):
-        kind = {"rectangle": "R", "trend_line": "L", "text": "T"}.get(o["object_type"])
+        kind = {"rectangle": "R", "trend_line": "L", "text": "T", "panel": "P"}.get(o["object_type"])
         if not kind:
             continue
+        t1 = str(_unix(o["time1"])) if o.get("time1") else "0"
+        p1 = str(fmt(o["price1"])) if o.get("price1") is not None else "0"
         t2 = str(_unix(o["time2"])) if o.get("time2") else ""
         p2 = str(fmt(o["price2"])) if o.get("price2") is not None else ""
-        out.append("|".join([kind, group, f"{group}{i}", str(_unix(o["time1"])), str(fmt(o["price1"])), t2, p2,
-                             _argb(o.get("color")), "1" if o.get("fill") else "0", str(thick or 1),
-                             STYLE.get(style, "solid"), "1" if o.get("extend") else "0", _clean(o.get("text"))]))
+        if kind in ("T", "P"):  # text: style = anchor (above | below | middle), extend = place right of the last candle
+            st, ext = o.get("anchor", "above"), "1" if o.get("right") else "0"
+        else:
+            st, ext = STYLE.get(style, "solid"), "1" if o.get("extend") else "0"
+        out.append("|".join([kind, group, f"{group}{i}", t1, p1, t2, p2, _argb(o.get("color")), "1" if o.get("fill") else "0",
+                             str(thick or 1), st, ext, _clean(o.get("text"))]))
     return out
 
 
-def build_feed(store, symbol, groups=GROUPS, kinds=None):
+def build_feed(store, symbol, groups=GROUPS, kinds=None, sess="kz"):
     from .drawing import plan_for, plan_smt
-    key = (symbol, tuple(groups), tuple(kinds or ()))
+    key = (symbol, tuple(groups), tuple(kinds or ()), sess)
     with _lock:
         hit = _cache.get(key)
         if hit and time.time() - hit[0] < CACHE_S:
@@ -97,7 +104,7 @@ def build_feed(store, symbol, groups=GROUPS, kinds=None):
                     continue
                 objs, _ = plan_smt(ctx, summ)
             else:
-                _, objs, _ = plan_for(g, ctx, None, store, kinds)
+                _, objs, _ = plan_for(g, ctx, None, store, kinds, sess=sess)
         except Exception as e:  # noqa: BLE001 — one group failing must not blank the others
             lines.append(f"#ERR|{g}|{_clean(e)}")
             continue
