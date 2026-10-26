@@ -1,28 +1,24 @@
-"""Draw previous-cycle highs/lows (PXH/PXL) and EQ on the ACTIVE cTrader chart (desktop app, MCP).
+"""Draw previous-cycle highs/lows (PXH/PXL) and EQ on a cTrader chart of the symbol (desktop app, MCP).
 Usage from the scanner folder:
     python -m ictscan.draw_cycles NAS100                    # week, day and 90-minute cycles (15 objects)
     python -m ictscan.draw_cycles US30 --kinds month,week   # choose cycles
     python -m ictscan.draw_cycles NAS100 --dry-run          # print the plan only (no cTrader needed)
     python -m ictscan.draw_cycles NAS100 --boxes            # the latest day's six 90-minute windows as boxes (12 objects)
 Each cycle kind gets one colour. PXH/PXL are solid lines and EQ is dotted, drawn only across the CURRENT cycle (from its
-start to its end), with a short label at the left end, so the chart stays clean on every timeframe. Before drawing it
-removes only the objects it drew last time (ids in DATA_DIR/drawn-cycles-<SYMBOL>.json, all MCP_ objects).
+start to its end), with a short label at the left end, so the chart stays clean on every timeframe. Drawing goes through
+ictscan.drawing (the active chart if it shows the symbol, else that symbol's open chart, else a new one); redrawing
+replaces only the objects drawn last time (ids in DATA_DIR/drawn-cycles-<SYMBOL>.json, all MCP_ objects).
+The same drawings are available as buttons on the dashboard (Time cycles and symbol pages) while the PC scanner runs.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import time
-from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .config import DATA_DIR, DB_PATH, MCP_ENDPOINT, PARAMS, SYMBOLS, TIMEFRAMES, WINDOW
-from .data import parse, sync
-from .engine.context import Context
-from .engine.core import make_bars
+from .data import parse
 from .engine.cycles import KINDS, build_cycles, cycle_summary
-from .mcp import MCPClient, MCPError
-from .store import Store
+from .mcp import MCPError
 
 NY = ZoneInfo("America/New_York")
 COLORS = {"month": "#E3E9F1", "week": "#B388FF", "day": "#5AA9FF", "90m": "#F5B84A"}
@@ -87,65 +83,20 @@ def main():
     ap.add_argument("symbol", nargs="?", default="NAS100")
     ap.add_argument("--kinds", default="week,day,90m", help=f"comma list of {', '.join(KINDS)}")
     ap.add_argument("--boxes", action="store_true", help="draw today's six 90-minute windows as boxes instead of levels")
+    ap.add_argument("--timeframe", default=None, help="timeframe for a new chart if none of this symbol is open (default m15)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    symbol, kinds = a.symbol, [k for k in a.kinds.split(",") if k in KINDS]
-    if symbol not in SYMBOLS:
-        raise SystemExit(f"Unknown symbol {symbol}; known: {', '.join(SYMBOLS)}")
-    store = Store(DB_PATH)
-    client = None if a.dry_run else MCPClient(MCP_ENDPOINT)
-    if client:
-        server_now = parse(client.call("get_server_time")["utcTime"])
-        for tf in TIMEFRAMES:
-            sync(client, store, symbol, tf, server_now)
-    bars = {tf: make_bars(store.load_bars(symbol, tf, WINDOW[tf]), tf) for tf in TIMEFRAMES}
-    ctx = Context(symbol, bars, SYMBOLS[symbol], PARAMS)
-    if a.boxes:
-        objs, lines = plan_boxes(ctx)
-        print(f"{symbol} {ctx.fmt(ctx.price)} at {ctx.now:%Y-%m-%d %H:%M} UTC — 90-minute windows (AM amber, PM blue):")
-    else:
-        objs, lines = plan(ctx, kinds)
-        print(f"{symbol} {ctx.fmt(ctx.price)} at {ctx.now:%Y-%m-%d %H:%M} UTC — previous-cycle levels:")
-    print("\n".join(lines))
+    from .drawing import DrawError, draw
+    try:
+        res = draw(a.symbol, "boxes" if a.boxes else "cycles", kinds=[k for k in a.kinds.split(",") if k in KINDS],
+                   timeframe=a.timeframe, dry_run=a.dry_run)
+    except (DrawError, MCPError) as e:
+        raise SystemExit(str(e)) from e
+    print("\n".join(res["lines"]))
     if a.dry_run:
-        for o, thick, style in objs:
-            print("   ", json.dumps(o), f"thickness={thick} style={style}" if thick else "")
-        print(f"Dry run: {len(objs)} objects planned (nothing drawn).")
-        return
-
-    def active_ok():
-        act = client.call("get_active_chart")
-        if act.get("symbolName") != symbol:
-            raise SystemExit(f"Active chart is {act.get('symbolName')} {act.get('timeframe')}; click inside a {symbol} chart and run again.")
-        return act["chartId"]
-
-    chart_id = active_ok()
-    rec_file = DATA_DIR / f"drawn-{'cycleboxes' if a.boxes else 'cycles'}-{symbol}.json"
-    old = json.loads(rec_file.read_text(encoding="utf-8")) if rec_file.exists() else {}
-    if old.get("chartId") == chart_id:
-        present = {o["objectId"] for o in client.call("get_chart_objects").get("objects", [])}
-        for oid in old.get("ids", []):
-            if oid.startswith("MCP_") and oid in present:
-                active_ok()
-                client.call("delete_chart_object", {"objectId": oid})
-                time.sleep(0.15)
-    ids = []
-    for obj, thick, style in objs:
-        active_ok()
-        res = client.call("add_chart_object", obj)
-        oid = res.get("objectId", "")
-        if not oid.startswith("MCP_"):
-            raise SystemExit(f"Unexpected response: {res}")
-        ids.append(oid)
-        if thick or style:
-            try:
-                client.call("update_chart_object", {"objectName": oid, "lineThickness": thick, "lineStyle": style})
-            except MCPError as e:
-                print(f"   (style not applied to {oid}: {e})")
-        rec_file.write_text(json.dumps({"chartId": chart_id, "symbol": symbol, "ids": ids,
-                                        "drawn": datetime.now().isoformat(timespec="seconds")}), encoding="utf-8")
-        time.sleep(0.15)
-    print(f"Drew {len(ids)} objects on chart {chart_id} ({'90-minute boxes' if a.boxes else ', '.join(kinds)}).")
+        for o in res["objects"]:
+            print("   ", json.dumps(o))
+        print(f"Dry run: {res['count']} objects planned (nothing drawn).")
 
 
 if __name__ == "__main__":

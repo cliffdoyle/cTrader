@@ -150,3 +150,115 @@ function setupRow(s) {
     <td>${scoreBar(s.score, s.checks)} <span class="small">${s.score}/${s.checks || 7}</span></td><td class="small muted">${esc(s.last_note)}</td></tr>`;
 }
 const SETUP_HEAD = '<tr><th>Signal</th><th>Direction</th><th>Stage</th><th>Reversal level</th><th>Entry / Stop / Target</th><th>Checks</th><th>Latest</th></tr>';
+
+/* ---------- Draw on cTrader (through the scanner running on this PC) ---------- */
+const BRIDGE = ['127.0.0.1', 'localhost'].includes(location.hostname) ? '' : 'http://127.0.0.1:8765';
+const DRAW_LABEL = { cycles: 'PXH / PXL levels', boxes: '90-min boxes', levels: 'Session levels', smt: 'SMT', clear: 'Clear' };
+let drawLink = null;
+async function drawStatus(force) {
+  if (drawLink && !force) return drawLink;
+  try {
+    const r = await fetch(BRIDGE + '/api/draw/status', { cache: 'no-store' });
+    drawLink = r.ok ? await r.json() : { ok: false, error: `PC scanner answered ${r.status}` };
+  } catch (e) {
+    drawLink = { ok: false, offline: true, error: 'PC scanner not reachable' };
+  }
+  return drawLink;
+}
+function linkText(s, sym) {
+  if (s.ok) {
+    const mine = (s.charts || []).filter(c => c.symbol === sym);
+    return `<span class="dot ok"></span>cTrader linked · ${mine.length ? `${sym} chart open (${mine.map(c => c.timeframe).join(', ')})` : `no ${sym} chart — one will open`}`;
+  }
+  if (s.offline) return '<span class="dot off"></span>PC link offline — run the ICT Scanner on your PC (and allow "local network access" if the browser asks)';
+  return `<span class="dot warn"></span>${esc(s.error || 'cTrader not ready')} — open cTrader with the MCP server enabled`;
+}
+function drawTools(sym, compact) {
+  if (compact) return `<div class="draw-tools compact" data-sym="${sym}">
+      <span class="dt-k">Draw on cTrader</span>
+      <button data-what="cycles" title="Week · Day · 90-min PXH / EQ / PXL">PXH/PXL</button>
+      <button data-what="boxes" title="Today's six 90-minute windows">90-min</button>
+      <button data-what="levels" title="PWH/PWL, PDH/PDL, Asia, London, NY AM, midnight open">Levels</button>
+      <button data-what="smt" title="SMT divergence lines and labels">SMT</button>
+      <button data-what="clear" class="ghost" title="Remove the scanner's drawings from ${sym} charts">✕</button>
+      <div class="dt-out tiny"></div></div>`;
+  return `<div class="draw-tools panel" data-sym="${sym}">
+    <div class="dt-head"><b>Draw ${sym} on cTrader</b><span class="dt-status small muted">checking the PC link…</span></div>
+    <div class="dt-row">
+      <div class="dt-group"><span class="dt-k">PXH / PXL</span>
+        ${[['week', 'Week', 1], ['day', 'Day', 1], ['90m', '90-min', 1], ['month', 'Month', 0]].map(([k, l, on]) =>
+          `<label class="chk"><input type="checkbox" value="${k}" ${on ? 'checked' : ''}>${l}</label>`).join('')}
+        <button data-what="cycles" class="primary">Draw levels</button></div>
+      <button data-what="boxes">90-min boxes</button>
+      <button data-what="levels">Session levels</button>
+      <button data-what="smt">SMT divergence</button>
+      <button data-what="clear" class="ghost">Clear scanner drawings</button>
+    </div>
+    <pre class="dt-out tiny"></pre>
+    <div class="tiny dim">Draws on the ${sym} chart in cTrader (the active one, else your open ${sym} chart, else a new chart). Redrawing replaces
+      only the scanner's own objects; your drawings are never touched.</div></div>`;
+}
+function initDrawTools(root) {
+  root.querySelectorAll('.draw-tools').forEach(box => {
+    const sym = box.dataset.sym, out = box.querySelector('.dt-out'), st = box.querySelector('.dt-status');
+    if (st) drawStatus().then(s => st.innerHTML = linkText(s, sym));
+    box.querySelectorAll('button[data-what]').forEach(btn => btn.onclick = async () => {
+      const what = btn.dataset.what;
+      if (what === 'clear' && !confirm(`Remove the scanner's drawings from your ${sym} charts?`)) return;
+      const kinds = [...box.querySelectorAll('input[type=checkbox]:checked')].map(i => i.value);
+      box.querySelectorAll('button').forEach(b => b.disabled = true);
+      btn.classList.add('busy');
+      out.className = out.className.replace(/ (ok|err)/g, '');
+      out.textContent = `Drawing ${DRAW_LABEL[what]} on ${sym}…`;
+      try {
+        const r = await fetch(BRIDGE + '/api/draw', { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ symbol: sym, what, kinds: kinds.length ? kinds : null }) });
+        const d = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+        out.classList.add(d.ok ? 'ok' : 'err');
+        out.textContent = d.ok ? (box.classList.contains('compact') ? d.lines[d.lines.length - 1] : d.lines.join('\n')) : `✕ ${d.error}`;
+      } catch (e) {
+        out.classList.add('err');
+        out.textContent = '✕ Could not reach the scanner on this PC (http://127.0.0.1:8765). Start the "ICT Scanner" task, open cTrader, '
+          + 'and allow local network access if the browser asks.';
+      }
+      btn.classList.remove('busy');
+      box.querySelectorAll('button').forEach(b => b.disabled = false);
+      if (st) drawStatus(true).then(s => st.innerHTML = linkText(s, sym));
+    });
+  });
+}
+
+/* ---------- SMT divergence ---------- */
+const SMT_STATUS = { watch: ['watch for the 5m shift', 'warn'], confirmed: ['shift confirmed', 'ok'], cancelled: ['absorbed', 'dim'] };
+function smtLabel(l) { const bad = l === 'HH' || l === 'LL'; return `<span class="smt-lab ${l.startsWith('EQ') ? 'eq' : bad ? 'take' : 'hold'}">${l}</span>`; }
+function smtSection(smt, opts) {
+  opts = opts || {};
+  if (!smt || !smt.cycles) return '<div class="panel muted small">SMT appears after the next scan.</div>';
+  const h = smt.headline;
+  const head = h ? `<div class="smt-banner ${h.side}"><b>${h.side === 'bearish' ? '▼ Bearish' : '▲ Bullish'} SMT</b> ${esc(h.text)}
+      <span class="smt-trade">${esc(h.trade)}${h.status ? ` · ${esc((SMT_STATUS[h.status] || [h.status])[0])}` : ''}</span></div>`
+    : '<div class="smt-banner none">No SMT divergence right now — the three indices agree.</div>';
+  const tiles = smt.cycles.map(c => {
+    const s = c.smt[0], syms = Object.keys(c.per);
+    const state = s ? `<span class="pill ${s.side}">${s.side === 'bearish' ? '▼ SMT at highs' : '▲ SMT at lows'}</span>`
+      : `<span class="pill mixed">${esc(c.state === 'inside' ? 'no divergence' : c.state)}</span>`;
+    const rows = syms.map(sym => { const p = c.per[sym];
+      return `<tr><td>${sym}</td><td class="${p.took_high ? 'bull' : 'dim'}">${p.took_high ? '✓' : '✗'} <span class="mono">${p.pxh}</span></td>
+        <td class="${p.took_low ? 'bear' : 'dim'}">${p.took_low ? '✓' : '✗'} <span class="mono">${p.pxl}</span></td></tr>`; }).join('');
+    return `<div class="smt-tile ${s ? s.side : ''}"><div class="smt-tile-h"><b>${esc(c.label)}</b><span class="tiny dim">${esc(c.window)}${c.live ? '' : ' · ended'}</span>${state}</div>
+      <table class="smt-tab"><tr><th></th><th>took PXH</th><th>took PXL</th></tr>${rows}</table>
+      ${c.smt.map(x => `<div class="small ${x.side === 'bearish' ? 'bear' : 'bull'}">${esc(x.text)}</div>`).join('')}</div>`;
+  }).join('');
+  const swings = (smt.swings || []).slice(0, opts.max || 8);
+  const list = swings.length ? swings.map(e => { const [st, cls] = SMT_STATUS[e.status] || [e.status, ''];
+    return `<div class="smt-ev ${e.side} ${e.status}"><span class="chip">${e.tf.toUpperCase()}</span>
+      <span class="${e.side === 'bearish' ? 'bear' : 'bull'}"><b>${e.side === 'bearish' ? '▼' : '▲'}</b></span>
+      <span class="small mono">${esc(e.when)}</span>
+      <span class="smt-labs">${Object.entries(e.per).map(([s, p]) => `<span>${s} ${smtLabel(p.label)}</span>`).join('')}</span>
+      <span class="st ${cls}">${esc(st)}</span>
+      <div class="tiny dim smt-ev-t">${esc(e.text)} — ${esc(e.trade)}</div></div>`; }).join('')
+    : '<div class="muted small">No swing SMT in the last hours.</div>';
+  return `${head}<div class="smt-tiles">${tiles}</div>
+    <div class="panel smt-list"><div class="small muted" style="margin-bottom:6px">Swing SMT (M5 · M15 · H1) — newest first.
+      <span class="smt-lab take">HH/LL</span> took the previous swing, <span class="smt-lab hold">LH/HL</span> failed to: that index is the weak/strong one.</div>${list}</div>`;
+}

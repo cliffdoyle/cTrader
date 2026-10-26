@@ -14,8 +14,12 @@
   <div class="section-head"><h2>Order-flow matrix</h2><span class="count">current cycle vs the previous one · all three indices</span></div>
   <div class="panel"><table class="matrix" id="matrix"></table></div>
 
+  <div class="section-head"><h2>SMT divergence</h2><span class="count">do all three indices take the previous cycle's high / low — or only some?</span></div>
+  <div id="smt"></div>
+
   <div class="section-head"><h2 id="cards-title">Cycles</h2><span class="count" id="cards-sub"></span></div>
   <div class="cyc-grid" id="cards"></div>
+  <div id="draw"></div>
 
   <div class="section-head"><h2>Cycle chart</h2><span class="count" id="chart-sub"></span></div>
   <div class="panel chart-panel">
@@ -26,9 +30,6 @@
     <div id="chart" class="chart"></div>
     <p class="small dim" style="margin:8px 2px 0">Each shaded column is one cycle. The lines inside a cycle are the <b>previous</b> cycle's levels —
       watch whether price holds or loses them. New York time.</p>
-    <p class="small muted" style="margin:6px 2px 0">On your cTrader chart: click inside the chart, then run
-      <span class="mono">python -m ictscan.draw_cycles <span id="cmd-sym">NAS100</span></span> on the PC (week · day · 90-min, 15 tidy objects; add
-      <span class="mono">--kinds month,week</span> to choose).</p>
   </div>
 </main>
 <script src="/static/common.js"></script>
@@ -42,7 +43,7 @@ const STATE = {
   inside: ['Inside range', 'mixed'], between: ['Between cycles', 'mixed'] };
 function posText(p) { return p == null ? '' : p < 0 ? 'below PXL' : p > 100 ? 'above PXH' : `${p}% of prev range`; }
 const params = new URLSearchParams(location.search);
-let sym = params.get('s') || 'NAS100', kind = params.get('k') || '90m', overview = null, chart = null, extra = [];
+let sym = params.get('s') || 'NAS100', kind = params.get('k') || '90m', overview = null, chart = null, extra = [], drawSym = null, lastSmt = '';
 
 function flowPill(r) { const [t, c] = STATE[r.state] || [r.state, 'mixed']; return `<span class="pill ${c}">${esc(t)}</span>`; }
 function hhmm(iso) { return NY_SHORT.format(new Date(iso)).split(', ').pop(); }
@@ -99,7 +100,7 @@ function renderAll() {
   document.querySelectorAll('[data-row]').forEach(tr => tr.onclick = () => { sym = tr.dataset.row; sync(); renderAll(); drawChart(); });
   const r = rows.find(x => x.symbol === sym);
   document.getElementById('cards-title').textContent = `${sym} cycles`;
-  document.getElementById('cmd-sym').textContent = sym;
+  if (drawSym !== sym) { drawSym = sym; const el = document.getElementById('draw'); el.innerHTML = drawTools(sym); initDrawTools(el); }
   document.getElementById('cards-sub').textContent = r ? `price ${r.price} · as of ${r.as_of_ny} NY` : '';
   document.getElementById('cards').innerHTML = r ? KINDS.slice().reverse().map(([k, l]) => cycleCard(k, l, (r.cycles || {})[k], r.price)).join('') : '';
 }
@@ -148,7 +149,11 @@ async function drawChart() {
   chart.chart.timeScale().fitContent();
 }
 
-async function load() { overview = await api('/api/overview'); setUnread(overview.unread); setHealth(overview.health); renderAll(); }
+async function load() {
+  overview = await api('/api/overview'); setUnread(overview.unread); setHealth(overview.health); renderAll();
+  const h = smtSection(overview.smt, { max: 12 });
+  if (h !== lastSmt) { lastSmt = h; document.getElementById('smt').innerHTML = h; }
+}
 renderTabs(); load().then(drawChart); setInterval(load, 60000);
 let lastCyclePx = {};
 startLive(live => {

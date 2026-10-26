@@ -5,6 +5,7 @@
 <body>
 <main>
   <h1 id="title">…</h1>
+  <div id="draw"></div>
   <div class="panel"><h3>Top-down read</h3><ul class="tight" id="narrative"></ul></div>
   <h2 id="session-title">Today's key levels &amp; bias</h2>
   <div class="grid cols-2">
@@ -30,6 +31,7 @@
 <script>
 startShell();
 const SYM = decodeURIComponent(location.pathname.split('/').pop());
+{ const el = document.getElementById('draw'); el.innerHTML = drawTools(SYM); initDrawTools(el); }
 const LAYERS = { session: "Today's levels", zones: 'W/D key levels', structure: 'Structure', pois: 'FVGs & order blocks', liquidity: 'Liquidity', setups: 'Active setups' };
 let snap, setups, tf = 'h1', on = { session: true, zones: false, structure: true, pois: true, liquidity: false, setups: true }, chart, data = [];
 

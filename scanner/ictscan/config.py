@@ -79,4 +79,9 @@ WEB_PORT = int(os.environ.get("ICTSCAN_PORT", "8765"))
 # Dashboard login (HTTP Basic). Required whenever the dashboard is reachable from the internet.
 DASH_USER = os.environ.get("ICTSCAN_USER", "admin")
 DASH_PASSWORD = os.environ.get("ICTSCAN_PASSWORD", "")
+# "Draw on cTrader" buttons: the PC scanner (desktop MCP source) accepts drawing requests on /api/draw from these
+# dashboard origins only (the hosted dashboard calls http://127.0.0.1:<port> in the user's browser).
+DRAW_BRIDGE = os.environ.get("ICTSCAN_DRAW_BRIDGE", "1" if DATA_SOURCE == "mcp" else "0") == "1"
+DRAW_ORIGINS = {o.strip() for o in os.environ.get("ICTSCAN_DRAW_ORIGINS", "https://scanner.zuristay.com").split(",") if o.strip()} | {
+    f"http://127.0.0.1:{WEB_PORT}", f"http://localhost:{WEB_PORT}"}
 SCAN_DELAY_SECONDS = 5 if DATA_SOURCE == "openapi" else 20  # wait after each M5 close so the broker has the closed candle

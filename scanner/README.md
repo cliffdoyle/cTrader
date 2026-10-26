@@ -89,6 +89,26 @@ nearest untouched liquidity above and below (session levels + day/week PXH/PXL, 
 scenarios — "Sell the buy-side raid" and "Buy the sell-side raid" with trigger, MMXM entry, targets and invalidation —
 ordered by the lean (primary / alternative). The lean only orders the scenarios; it is not a forecast.
 
+**Draw from the dashboard**: the Time cycles page, each symbol page and each NY-plan card have a "Draw on cTrader" toolbar
+(PXH/PXL levels with week/day/90-min/month ticks, 90-min boxes, session levels, SMT, clear). The browser sends the request
+to the scanner running on this PC (`http://127.0.0.1:8765/api/draw`, also from the hosted dashboard — the PC endpoint only
+accepts the dashboard origins in `DRAW_ORIGINS` and answers the Chrome/Edge private-network preflight; allow "local network
+access" if the browser asks). `ictscan/drawing.py` picks the chart (active chart of the symbol, else its open chart brought to
+the front, else a new chart), re-checks the active chart before every object and keeps per-chart records, so redrawing
+replaces only the scanner's own `MCP_` objects. The server copy (Open API) has no drawing endpoint.
+
+## SMT divergence (NAS100 · US30 · US500)
+`engine/smt.py`, computed every scan (store meta `smt`, `/api/smt`, overview and Time cycles pages):
+- **Cycle SMT** — for the 90-minute, day and week cycles: which indices took the previous cycle's PXH / PXL. Some took the
+  high and some did not = bearish SMT (sell the weaker one that held); mirror at the lows = bullish SMT.
+- **Swing SMT** on M5 / M15 / H1 — consecutive swing highs (lows) compared across the three indices around the same times
+  (±2 bars; within 0.1 × ATR counts as equal, EQH/EQL, and is ignored). Status: *watch* (divergence, no shift yet),
+  *confirmed* (an index closed through the swing between the two points — the market structure shift),
+  *absorbed* (every index went on to a new extreme).
+SMT is a warning that a reversal may be coming, not an entry; the MMXM rules still need the 5m shift + FVG.
+`draw smt` draws this index's divergent swing as a line with an "SMT ▼ M5 (confirmed): NAS100 HH · US30 LH · US500 HH"
+label and live cycle SMT labels to the right of the last candle.
+
 **Live prices**: the Open API client streams spot quotes for the three indices; the dashboard polls `/api/live` every
 second (price, forming M5/M15/H1 candle, signal distance, cycle countdowns). Quotes older than 120 s count as closed
 market (no forming bar). Signals still come from closed 5-minute candles (scan starts ~5 s after each close).

@@ -9,6 +9,9 @@
   <div class="section-head"><h2>New York session plan</h2><span class="count" id="plan-sub"></span></div>
   <div class="plan-grid" id="plans"></div>
 
+  <div class="section-head"><h2>SMT divergence</h2><span class="count">NAS100 · US30 · US500 disagreeing at a high or low = reversal warning · <a href="/cycles">details</a></span></div>
+  <div id="smt"></div>
+
   <div class="section-head"><h2>Live signals</h2><span class="count" id="live-count"></span></div>
   <div id="live"></div>
 
@@ -24,6 +27,7 @@
 <script src="/static/common.js"></script>
 <script>
 startShell();
+let lastPlanHtml = '', lastSmtHtml = '';
 
 function indexCard(r, nActive) {
   if (r.missing) return `<div class="idx-card"><div class="idx-name">${esc(r.symbol)}</div><div class="idx-sub">waiting for the first scan…</div></div>`;
@@ -73,6 +77,7 @@ function planCard(sym, p) {
     ${scn}
     <details class="why"><summary>Why ${esc(p.lean)}? (${p.votes.length} inputs, score ${p.score > 0 ? '+' : ''}${p.score})</summary><ul class="tight small">${votes}</ul>
       <div class="tiny dim">${esc(p.evidence)}</div></details>
+    ${drawTools(sym, true)}
   </div>`;
 }
 
@@ -95,7 +100,14 @@ async function load() {
   const count = {}; d.active.forEach(s => count[s.symbol] = (count[s.symbol] || 0) + 1);
   document.getElementById('indices').innerHTML = d.symbols.map(r => indexCard(r, count[r.symbol] || 0)).join('');
   const plans = d.symbols.filter(r => !r.missing);
-  document.getElementById('plans').innerHTML = plans.map(r => planCard(r.symbol, r.nyplan)).join('');
+  const planKey = JSON.stringify(plans.map(r => r.nyplan));
+  if (planKey !== lastPlanHtml) {  // re-render only when the plan changed, so draw results stay visible
+    lastPlanHtml = planKey;
+    document.getElementById('plans').innerHTML = plans.map(r => planCard(r.symbol, r.nyplan)).join('');
+    initDrawTools(document.getElementById('plans'));
+  }
+  const smtHtml = smtSection(d.smt, { max: 6 });
+  if (smtHtml !== lastSmtHtml) { lastSmtHtml = smtHtml; document.getElementById('smt').innerHTML = smtHtml; }
   const p0 = plans.find(r => r.nyplan && !r.nyplan.error);
   document.getElementById('plan-sub').textContent = p0 ? 'scenarios for the six 90-minute windows · rebuilt every 5 minutes' : '';
   document.getElementById('live-count').textContent = d.active.length ? `${d.active.length} active` : '';

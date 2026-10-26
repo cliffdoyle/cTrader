@@ -225,3 +225,48 @@ table.matrix tr.sel td:first-child { box-shadow:inset 3px 0 0 var(--info); }
 .scn-h { font-weight:700; font-size:13px; display:flex; align-items:center; gap:8px; } .scn.sell .scn-h { color:#ff8b96; } .scn.buy .scn-h { color:#5fe0bd; }
 .scn b { color:var(--text); }
 details.why summary { cursor:pointer; color:var(--muted); font-size:12px; } details.why ul { margin:6px 0; }
+
+/* Draw on cTrader toolbar */
+.dot.off { background:var(--bear); } .dot.warn { background:var(--warn); }
+.draw-tools { margin-top:14px; display:flex; flex-direction:column; gap:10px; }
+.draw-tools .dt-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .draw-tools .dt-head b { font-size:14px; }
+.draw-tools .dt-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.draw-tools .dt-group { display:flex; align-items:center; gap:8px; padding:5px 6px 5px 12px; border:1px solid var(--line2); border-radius:10px; background:#111823; }
+.draw-tools .dt-k { font-size:10px; text-transform:uppercase; letter-spacing:.7px; color:var(--dim); font-weight:700; }
+.draw-tools button { background:#1a2331; color:var(--text); border:1px solid var(--line2); border-radius:8px; padding:6px 12px; font:600 12px inherit;
+  font-family:inherit; cursor:pointer; transition:border-color .15s, background .15s; }
+.draw-tools button:hover:not(:disabled) { border-color:var(--info); background:#1d2838; }
+.draw-tools button.primary { background:var(--info-bg); border-color:rgba(90,169,255,.5); color:#cfe4ff; }
+.draw-tools button.ghost { background:transparent; color:var(--muted); }
+.draw-tools button:disabled { opacity:.5; cursor:wait; } .draw-tools button.busy { opacity:1; border-color:var(--warn); color:var(--warn); }
+.draw-tools .chk { display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--muted); cursor:pointer; }
+.draw-tools .chk input { accent-color:var(--info); }
+.draw-tools .dt-out { margin:0; white-space:pre-wrap; color:var(--muted); font-family:ui-monospace, Consolas, monospace; min-height:0; }
+.draw-tools .dt-out:empty { display:none; }
+.draw-tools .dt-out.ok { color:var(--bull); } .draw-tools .dt-out.err { color:var(--bear); }
+.draw-tools.compact { flex-direction:row; flex-wrap:wrap; align-items:center; gap:6px; margin-top:0; padding-top:10px; border-top:1px dashed var(--line); }
+.draw-tools.compact button { padding:4px 9px; font-size:11px; } .draw-tools.compact .dt-out { flex-basis:100%; }
+
+/* SMT divergence */
+.smt-banner { border-radius:12px; padding:12px 16px; margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:baseline;
+  background:#141b27; border:1px solid var(--line); border-left:4px solid var(--line2); }
+.smt-banner.bearish { border-left-color:var(--bear); background:linear-gradient(90deg, rgba(255,93,108,.10), #141b27 60%); }
+.smt-banner.bullish { border-left-color:var(--bull); background:linear-gradient(90deg, rgba(34,195,154,.10), #141b27 60%); }
+.smt-banner.bearish b { color:var(--bear); } .smt-banner.bullish b { color:var(--bull); } .smt-banner.none { color:var(--muted); }
+.smt-trade { font-size:12px; color:var(--muted); margin-left:auto; }
+.smt-tiles { display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); margin-bottom:12px; }
+.smt-tile { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; border-top:3px solid #3a4659; display:grid; gap:6px; }
+.smt-tile.bearish { border-top-color:var(--bear); } .smt-tile.bullish { border-top-color:var(--bull); }
+.smt-tile-h { display:flex; align-items:center; gap:8px; } .smt-tile-h .pill { margin-left:auto; }
+.smt-tab { width:100%; border-collapse:collapse; font-size:12px; }
+.smt-tab th { text-align:left; font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase; letter-spacing:.5px; padding:2px 4px; }
+.smt-tab td { padding:3px 4px; border-top:1px dashed #1e2837; }
+.smt-list { display:grid; gap:2px; }
+.smt-ev { display:grid; grid-template-columns:auto auto 92px 1fr auto; gap:4px 10px; align-items:center; padding:7px 4px; border-top:1px solid #1a2230; }
+.smt-ev.cancelled { opacity:.5; } .smt-ev-t { grid-column:3 / -1; }
+.smt-labs { display:flex; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+.smt-lab { display:inline-block; padding:0 5px; border-radius:4px; font-size:10px; font-weight:700; font-family:ui-monospace, Consolas, monospace; }
+.smt-lab.take { background:#1c2533; color:var(--muted); } .smt-lab.hold { background:var(--warn-bg); color:var(--warn); } .smt-lab.eq { background:#1c2533; color:var(--dim); }
+.smt-ev .st { font-size:11px; font-weight:700; } .st.ok { color:var(--bull); } .st.warn { color:var(--warn); } .st.dim { color:var(--dim); }
+@media (max-width:700px) { .smt-ev { grid-template-columns:auto auto 1fr; } .smt-ev .smt-labs, .smt-ev .st { grid-column:1 / -1; } }
+.plan-head .pill, .smt-tile-h .pill { white-space:nowrap; }

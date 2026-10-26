@@ -8,11 +8,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from ..config import (ALERT_SETUPS, DASH_PASSWORD, DASH_USER, DASHBOARD_SETUPS, DASHBOARD_SYMBOLS, DATA_SOURCE, SHOW_GRADES,
-                      SYMBOLS, TIMEFRAMES, WINDOW)
+from ..config import (ALERT_SETUPS, DASH_PASSWORD, DASH_USER, DASHBOARD_SETUPS, DASHBOARD_SYMBOLS, DATA_SOURCE, DRAW_BRIDGE,
+                      DRAW_ORIGINS, SHOW_GRADES, SYMBOLS, TIMEFRAMES, WINDOW)
 from ..engine.core import TF_SECONDS, make_bars
 from ..engine.cycles import KIND_TF, chart_cycles
 
@@ -45,9 +45,50 @@ def create_app(store, scanner=None):
     if DASH_PASSWORD:
         @app.middleware("http")
         async def basic_auth(request: Request, call_next):
-            if request.url.path == "/healthz" or _authorised(request.headers.get("authorization", "")):
+            if (request.url.path == "/healthz" or (DRAW_BRIDGE and request.url.path.startswith("/api/draw"))
+                    or _authorised(request.headers.get("authorization", ""))):
                 return await call_next(request)
             return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="ICT Scanner"'})
+
+    if DRAW_BRIDGE:
+        @app.middleware("http")
+        async def draw_cors(request: Request, call_next):
+            """Only the dashboard origins may call /api/draw (CORS + Chrome/Edge private-network preflight)."""
+            if not request.url.path.startswith("/api/draw"):
+                return await call_next(request)
+            origin = request.headers.get("origin")
+            if origin and origin not in DRAW_ORIGINS:
+                return Response(status_code=403, content="origin not allowed")
+            hdrs = {"Access-Control-Allow-Origin": origin, "Vary": "Origin"} if origin else {}
+            if request.method == "OPTIONS":
+                return Response(status_code=204, headers={**hdrs, "Access-Control-Allow-Methods": "GET, POST",
+                                                          "Access-Control-Allow-Headers": "content-type",
+                                                          "Access-Control-Allow-Private-Network": "true",
+                                                          "Access-Control-Max-Age": "600"})
+            resp = await call_next(request)
+            resp.headers.update(hdrs)
+            return resp
+
+        @app.get("/api/draw/status")
+        def draw_status():
+            from ..drawing import status
+            from ..mcp import MCPError
+            try:
+                return status()
+            except MCPError as e:
+                return {"ok": False, "error": str(e)}
+
+        @app.post("/api/draw")
+        def draw_now(body: dict = Body(...)):
+            from ..drawing import DrawError, draw
+            from ..mcp import MCPError
+            try:
+                return draw(str(body.get("symbol", "")), str(body.get("what", "")),
+                            kinds=[str(k) for k in body.get("kinds") or []] or None,
+                            untouched_only=bool(body.get("untouched_only")), timeframe=body.get("timeframe") or None,
+                            store=store)
+            except (DrawError, MCPError) as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
     @app.get("/healthz")
     def healthz():
@@ -172,8 +213,12 @@ def create_app(store, scanner=None):
         return {"health": store.get_meta("health"), "unread": store.unread_count(**FILT), "symbols": rows,
                 "muted": store.get_meta("alerts_muted", False), "show_grades": list(SHOW_GRADES),
                 "dashboard": {"symbols": list(DASH_SYMS), "setups": list(DASHBOARD_SETUPS)},
-                "stats": performance(closed, days=30),
+                "stats": performance(closed, days=30), "smt": store.get_meta("smt"),
                 "active": [brief(s) for s in active], "recent": [brief(s) for s in closed[:30]]}
+
+    @app.get("/api/smt")
+    def smt():
+        return store.get_meta("smt") or {}
 
     @app.get("/api/symbol/{sym}")
     def symbol(sym: str):
