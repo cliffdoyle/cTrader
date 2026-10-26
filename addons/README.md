@@ -1,9 +1,12 @@
 # Chart add-ons: ICT Scanner Levels (cTrader + MT5)
 
 Draw the scanner's levels on your own charts without the cTrader MCP:
-- **Asia (20:00–00:00 NY) and London (02:00–05:00 NY) boxes**: light shading with "ASIA H …" / "L …" printed. A dotted line
-  runs right from each high/low until price takes it ("swept 07:50").
-- **90-minute boxes** (07:00 → 14:30 NY), one colour per window, with their high and low printed.
+- **Asia and London boxes**: light shading with "ASIA H …" above and "L … · O … → C …" below; short thick ticks on the left
+  and right edges mark the session's opening and closing price. A dotted line runs right from each high/low until price
+  takes it ("swept 07:50"). *Session times*: **KillZones** (default) = ICT kill zones, Asia 20:00–00:00 and London
+  02:00–05:00 NY, with 00:00–02:00 left empty on purpose; **Continuous** = Asia 20:00–02:00 runs straight into London.
+- **90-minute boxes** (07:00 → 14:30 NY), one colour per window, with high, low, open and close printed (and open/close
+  ticks). Every other window's labels sit one text row further out, so neighbouring boxes' labels never overlap at any zoom.
 - **PXH / PXL / EQ** of the previous week, day and 90-minute cycle; labels sit in the empty space right of the candles.
 - **SMT card** (dark box, top left by default; *SMT card position* moves it): the verdict, the bigger SMT (direction) and the 5m/15m SMT (timing) with each index's
   HH/LH (or ✓/✗ took the level), and which index to trade. On the chart, one line joins this index's two swing points.
@@ -25,10 +28,15 @@ PC and in the server's `deploy/.env` as `ICTSCAN_FEED_TOKEN`.
 3. Paste the feed key into **Feed key** → OK. The bottom-left status shows "ICT Scanner · NAS100 · 50 objects · 14:20 UTC".
 
 ## MT5 — expert (draws only)
-MT5 allows web requests only in Expert Advisors, so this is an EA — it contains no order functions.
-1. File → Open Data Folder → `MQL5\Experts` → copy `mt5/ICT Scanner Levels.ex5` (or the `.mq5` and compile it in MetaEditor).
-2. Tools → Options → Expert Advisors → tick **Allow WebRequest for listed URL** → add `https://scanner.zuristay.com`.
-3. Drag **ICT Scanner Levels** onto the chart → Inputs → paste the feed key → OK. (One EA per chart in MT5.)
+MT5 allows web requests only in Expert Advisors, so this is an EA — it contains no order functions. It works with the
+**Algo Trading** button off (that button only blocks trading), so you can leave it off.
+1. Open MT5 and log in to any broker account (demo is fine). Open a NAS100/US30/US500 chart (names differ per broker,
+   e.g. USTEC, US30, US500/SPX500).
+2. File → Open Data Folder → `MQL5\Experts` → copy `mt5/ICT Scanner Levels.ex5` there → in the Navigator, right-click
+   Expert Advisors → Refresh.
+3. Tools → Options → Expert Advisors → tick **Allow WebRequest for listed URL** → add `https://scanner.zuristay.com` → OK.
+4. Drag **ICT Scanner Levels** from the Navigator onto the chart → Inputs → paste the feed key into **Feed key** → OK.
+   (One EA per chart in MT5; use another chart for another EA.)
 
 ## Settings (both)
 | Setting | Default | Meaning |
