@@ -234,10 +234,21 @@ function smtLabel(l) { const bad = l === 'HH' || l === 'LL'; return `<span class
 function smtSection(smt, opts) {
   opts = opts || {};
   if (!smt || !smt.cycles) return '<div class="panel muted small">SMT appears after the next scan.</div>';
-  const h = smt.headline;
-  const head = h ? `<div class="smt-banner ${h.side}"><b>${h.side === 'bearish' ? '▼ Bearish' : '▲ Bullish'} SMT</b> ${esc(h.text)}
-      <span class="smt-trade">${esc(h.trade)}${h.status ? ` · ${esc((SMT_STATUS[h.status] || [h.status])[0])}` : ''}</span></div>`
-    : '<div class="smt-banner none">No SMT divergence right now — the three indices agree.</div>';
+  const v = smt.verdict || {};
+  const b = v.bias, t = v.trigger, sell = b && b.side === 'bearish';
+  const step = (n, title, body, state) => `<div class="smt-step ${state}"><span class="n">${n}</span><div><b>${title}</b><div class="small">${body}</div></div></div>`;
+  const verdict = `<div class="smt-verdict ${b ? b.side : 'none'} ${esc(v.state || 'none')}">
+    <div class="smt-v-head">${b ? `<b class="${sell ? 'bear' : 'bull'}">${sell ? '▼ Bearish' : '▲ Bullish'} SMT</b>` : '<b class="muted">No SMT signal</b>'}
+      <span class="small">${esc(v.summary || '')}</span></div>
+    <div class="smt-steps">
+      ${step(1, 'Direction — bigger SMT', b ? `${esc(b.name)} SMT ${b.side === 'bearish' ? '▼' : '▲'} · ${esc(b.text)} <span class="dim">(${esc(b.when)} NY)</span>`
+        : 'none yet — needs a Week, Day or 90-min cycle SMT (or 1H swing)', b ? 'done' : 'todo')}
+      ${step(2, 'Timing — 5m / 15m SMT the same way', t ? `${esc(t.name)} SMT ${t.side === 'bearish' ? '▼' : '▲'} at ${esc(t.when)} NY · ${esc(t.text)}`
+        : (b ? 'waiting — watch the 5m chart near the swept level' : '—'), t ? 'done' : 'todo')}
+      ${step(3, 'Entry — MMXM signal', b ? `${sell ? 'sell' : 'buy'} the ${sell ? 'weaker' : 'stronger'} index: <b>${esc((v.trade_on || []).join(' / '))}</b> — only when the scanner pops up the MMXM signal (5m shift + FVG)`
+        : '—', 'todo')}
+    </div>
+    ${(v.against || []).length ? `<div class="tiny warn">⚠ ${esc(v.against[0].name)} SMT points the other way (${esc(v.against[0].side)}) — smaller size or wait.</div>` : ''}</div>`;
   const tiles = smt.cycles.map(c => {
     const s = c.smt[0], syms = Object.keys(c.per);
     const state = s ? `<span class="pill ${s.side}">${s.side === 'bearish' ? '▼ SMT at highs' : '▲ SMT at lows'}</span>`
@@ -258,7 +269,10 @@ function smtSection(smt, opts) {
       <span class="st ${cls}">${esc(st)}</span>
       <div class="tiny dim smt-ev-t">${esc(e.text)} — ${esc(e.trade)}</div></div>`; }).join('')
     : '<div class="muted small">No swing SMT in the last hours.</div>';
-  return `${head}<div class="smt-tiles">${tiles}</div>
+  const guide = `<div class="tiny dim smt-guide"><b>How SMT works:</b> the three indices usually move together. When one takes a high (or low) and the others
+    refuse, the move is not supported — a reversal warning. Bigger SMT (Week › Day › 90-min/1H) gives the <b>direction</b>; a 5m/15m SMT the same way gives
+    the <b>timing</b>; the MMXM signal is the <b>entry</b>. Trade the index that refused (it is the weak one at highs, the strong one at lows).</div>`;
+  return `${verdict}<details class="smt-more" ${opts.open ? 'open' : ''}><summary>Details — cycle and swing SMT</summary>${guide}<div class="smt-tiles">${tiles}</div>
     <div class="panel smt-list"><div class="small muted" style="margin-bottom:6px">Swing SMT (M5 · M15 · H1) — newest first.
-      <span class="smt-lab take">HH/LL</span> took the previous swing, <span class="smt-lab hold">LH/HL</span> failed to: that index is the weak/strong one.</div>${list}</div>`;
+      <span class="smt-lab take">HH/LL</span> took the previous swing, <span class="smt-lab hold">LH/HL</span> failed to: that index is the weak/strong one.</div>${list}</div></details>`;
 }

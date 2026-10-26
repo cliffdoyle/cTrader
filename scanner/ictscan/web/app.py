@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from ..config import (ALERT_SETUPS, DASH_PASSWORD, DASH_USER, DASHBOARD_SETUPS, DASHBOARD_SYMBOLS, DATA_SOURCE, DRAW_BRIDGE,
-                      DRAW_ORIGINS, SHOW_GRADES, SYMBOLS, TIMEFRAMES, WINDOW)
+                      DRAW_ORIGINS, FEED_TOKEN, SHOW_GRADES, SYMBOLS, TIMEFRAMES, WINDOW)
 from ..engine.core import TF_SECONDS, make_bars
 from ..engine.cycles import KIND_TF, chart_cycles
 
@@ -42,10 +42,18 @@ def create_app(store, scanner=None):
     app = FastAPI(title="ICT Scanner", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+    @app.middleware("http")
+    async def static_revalidate(request: Request, call_next):
+        resp = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            resp.headers["Cache-Control"] = "no-cache"  # always revalidate (ETag) so updates show up at once
+        return resp
+
     if DASH_PASSWORD:
         @app.middleware("http")
         async def basic_auth(request: Request, call_next):
             if (request.url.path == "/healthz" or (DRAW_BRIDGE and request.url.path.startswith("/api/draw"))
+                    or request.url.path.startswith("/api/feed/")  # checks its own read-only key (feed_ok)
                     or _authorised(request.headers.get("authorization", ""))):
                 return await call_next(request)
             return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="ICT Scanner"'})
@@ -123,7 +131,12 @@ def create_app(store, scanner=None):
         return _page("Connected to cTrader", f"<p>Read-only access granted. The token is valid until {until} and renews automatically.</p>{note}")
 
     def page(name):
-        return FileResponse(STATIC / name, headers={"Cache-Control": "no-store"})
+        # Versioned asset URLs: a browser holding an old common.js/style.css would otherwise break a newer page.
+        ver = int(max(p.stat().st_mtime for p in STATIC.iterdir() if p.suffix in (".js", ".css")))
+        text = (STATIC / name).read_text(encoding="utf-8")
+        for asset in ("common.js", "chart.js", "style.css"):
+            text = text.replace(f"/static/{asset}\"", f"/static/{asset}?v={ver}\"")
+        return HTMLResponse(text, headers={"Cache-Control": "no-store"})
 
     @app.get("/")
     def index():
@@ -219,6 +232,24 @@ def create_app(store, scanner=None):
     @app.get("/api/smt")
     def smt():
         return store.get_meta("smt") or {}
+
+    @app.get("/api/feed/{sym}")
+    def feed(sym: str, request: Request, token: str = "", groups: str = "boxes,cycles,levels,smt", kinds: str = ""):
+        """Drawing instructions for the chart add-ons (see ictscan/feed.py). Read-only."""
+        from ..feed import GROUPS, build_feed, resolve
+        given = token or request.headers.get("x-feed-token", "")
+        if not ((FEED_TOKEN and secrets.compare_digest(given.encode(), FEED_TOKEN.encode())) or not DASH_PASSWORD
+                or _authorised(request.headers.get("authorization", ""))):
+            return PlainTextResponse("#ERR|auth|wrong or missing feed token\n", status_code=401)
+        target = resolve(sym)
+        if not target:
+            return PlainTextResponse(f"#ERR|symbol|{sym} is not a scanner symbol\n", status_code=404)
+        gs = [g for g in groups.split(",") if g in GROUPS] or list(GROUPS)
+        ks = [k for k in kinds.split(",") if k in ("month", "week", "day", "90m")] or None
+        try:
+            return PlainTextResponse(build_feed(store, target, gs, ks), headers={"Cache-Control": "no-store"})
+        except ValueError as e:
+            return PlainTextResponse(f"#ERR|data|{e}\n", status_code=503)
 
     @app.get("/api/symbol/{sym}")
     def symbol(sym: str):

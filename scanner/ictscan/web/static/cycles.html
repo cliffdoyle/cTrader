@@ -10,6 +10,7 @@
         Holding a broken level = continuation; losing it again = first warning of a reversal.</div></div>
     <div class="tabs seg" id="sym-tabs"></div>
   </div>
+  <div id="draw"></div>
 
   <div class="section-head"><h2>Order-flow matrix</h2><span class="count">current cycle vs the previous one · all three indices</span></div>
   <div class="panel"><table class="matrix" id="matrix"></table></div>
@@ -19,7 +20,6 @@
 
   <div class="section-head"><h2 id="cards-title">Cycles</h2><span class="count" id="cards-sub"></span></div>
   <div class="cyc-grid" id="cards"></div>
-  <div id="draw"></div>
 
   <div class="section-head"><h2>Cycle chart</h2><span class="count" id="chart-sub"></span></div>
   <div class="panel chart-panel">
@@ -151,7 +151,7 @@ async function drawChart() {
 
 async function load() {
   overview = await api('/api/overview'); setUnread(overview.unread); setHealth(overview.health); renderAll();
-  const h = smtSection(overview.smt, { max: 12 });
+  const h = smtSection(overview.smt, { max: 12, open: true });
   if (h !== lastSmt) { lastSmt = h; document.getElementById('smt').innerHTML = h; }
 }
 renderTabs(); load().then(drawChart); setInterval(load, 60000);

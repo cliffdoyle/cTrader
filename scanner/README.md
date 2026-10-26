@@ -80,7 +80,10 @@ cycle cards with a PXL–EQ–PXH gauge, and a chart with shaded cycles and each
 the following cycle. On cTrader: `python -m ictscan.draw_cycles NAS100 [--kinds month,week,day,90m] [--dry-run]`
 draws PXH/PXL (solid) and EQ (dotted) across the current cycle with short labels, one colour per cycle (week purple,
 day blue, 90-min amber, month white), replacing only its own previous drawing. `--boxes` instead draws the latest day's
-six 90-minute windows as boxes (window high→low, AM amber / PM blue) with a start-time label (12 objects, own record file).
+six 90-minute windows as TradingView-style session boxes — a ≈15 % translucent fill (`#AARRGGBB` colours work in
+`add_chart_object`) plus a 70 % outline, one colour per window (07:00 violet, 08:30 amber, 10:00 teal, 11:30 grey, 13:00 blue,
+14:30 pink; the forming window has a dashed outline and spans to its end), labelled "08:30 · 163" (start · range); up to 18
+objects, own record file.
 
 **New York session plan** (`engine/nyplan.py`, overview page): for each index, the next/current NY session (after 16:00
 it plans the next trading day) — a lean from four votes (week and day cycle reads, D1 and 4H structure; needs a 2-vote
@@ -97,6 +100,12 @@ access" if the browser asks). `ictscan/drawing.py` picks the chart (active chart
 the front, else a new chart), re-checks the active chart before every object and keeps per-chart records, so redrawing
 replaces only the scanner's own `MCP_` objects. The server copy (Open API) has no drawing endpoint.
 
+**Chart add-ons without MCP** ([../addons/README.md](../addons/README.md)): a cTrader indicator and an MT5 expert (draws
+only) download `GET /api/feed/<symbol>?groups=boxes,cycles,levels,smt&kinds=…&token=<ICTSCAN_FEED_TOKEN>` every minute
+and draw the same objects as the buttons above. `ictscan/feed.py` turns `drawing.plan_for` / `plan_smt` output into plain
+pipe-separated lines (MQL5 has no JSON parser), maps broker names (USTEC → NAS100 …) and caches 20 s. The feed has its own
+read-only key and is the only path that bypasses the dashboard login.
+
 ## SMT divergence (NAS100 · US30 · US500)
 `engine/smt.py`, computed every scan (store meta `smt`, `/api/smt`, overview and Time cycles pages):
 - **Cycle SMT** — for the 90-minute, day and week cycles: which indices took the previous cycle's PXH / PXL. Some took the
@@ -106,8 +115,12 @@ replaces only the scanner's own `MCP_` objects. The server copy (Open API) has n
   *confirmed* (an index closed through the swing between the two points — the market structure shift),
   *absorbed* (every index went on to a new extreme).
 SMT is a warning that a reversal may be coming, not an entry; the MMXM rules still need the 5m shift + FVG.
-`draw smt` draws this index's divergent swing as a line with an "SMT ▼ M5 (confirmed): NAS100 HH · US30 LH · US500 HH"
-label and live cycle SMT labels to the right of the last candle.
+**Verdict** (`smt_verdict`, top of the SMT section): every live SMT is ranked (Week 5 › Day 4 › 90-min = 1H 3 › 15m 2 › 5m 1).
+Step 1 *direction* = the strongest SMT of weight ≥ 3; step 2 *timing* = a 5m/15m SMT the same way that formed after it;
+step 3 *entry* = the MMXM signal on the index that refused (weak one at highs, strong one at lows). Opposite SMTs of weight
+≥ 3 are shown as a caution.
+`draw smt` draws only the direction SMT (label at this index's cycle high/low: "▼ Day SMT (took PXH)" / "(held PXH)") and
+the timing SMT (line between this index's two swing points + "▼ 5m SMT LH").
 
 **Live prices**: the Open API client streams spot quotes for the three indices; the dashboard polls `/api/live` every
 second (price, forming M5/M15/H1 candle, signal distance, cycle countdowns). Quotes older than 120 s count as closed

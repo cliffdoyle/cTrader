@@ -124,7 +124,7 @@ def plan_for(what, ctx, client, store, kinds=None, untouched_only=False):
     if what == "boxes":
         from .draw_cycles import plan_boxes
         objs, lines = plan_boxes(ctx)
-        return "90-minute windows (AM amber, PM blue)", objs, lines
+        return "90-minute windows (filled session boxes, one colour per window)", objs, lines
     if what == "levels":
         from .draw_levels import plan_levels
         objs, lines = plan_levels(ctx, untouched_only)
@@ -145,36 +145,34 @@ def plan_for(what, ctx, client, store, kinds=None, untouched_only=False):
 SMT_COL = {"bearish": "#FF5C6C", "bullish": "#2BD4A4"}
 
 
-def plan_smt(ctx, summ, max_swings=3):
-    sym, pad = ctx.symbol, ctx.atr["h1"][-1] * 0.15
+def plan_smt(ctx, summ):
+    """Only what matters: the strongest SMT (direction) and the 5m/15m SMT that agrees with it (timing), short labels."""
+    sym, atr = ctx.symbol, ctx.atr["h1"][-1]
+    v = summ.get("verdict") or {}
     objs, lines = [], []
-    shown = [e for e in summ["swings"] if e["status"] != "cancelled"][:max_swings]
-    for e in shown:
-        p, col = e["per"][sym], SMT_COL[e["side"]]
-        t1, t2 = parse(p["t1"]), parse(p["t2"])
-        objs.append(({"object_type": "trend_line", "price1": p["p1"], "time1": iso(t1), "price2": p["p2"], "time2": iso(t2),
-                      "color": col, "extend": False}, 2, "solid"))
-        arrow = "▼" if e["side"] == "bearish" else "▲"
-        others = " · ".join(f"{s} {q['label']}" for s, q in e["per"].items())
-        y = p["p2"] + pad if e["side"] == "bearish" else p["p2"] - pad
-        objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(t2), "color": col,
-                      "text": f"SMT {arrow} {e['tf'].upper()} ({e['status']}): {others}"}, None, None))
-        lines.append(f"  {e['tf'].upper():4} {e['side']:8} {e['when']} NY  {e['status']:9} {e['text']}")
-    for c in summ["cycles"]:
-        if not c["live"]:
+    for role, x in (("direction", v.get("bias")), ("timing", v.get("trigger"))):
+        if not x:
             continue
-        for k, s in enumerate(c["smt"]):
-            q, col = c["per"][sym], SMT_COL[s["side"]]
-            bear = s["side"] == "bearish"
-            price = q["pxh"] + pad * (2 + 2 * k) if bear else q["pxl"] - pad * (2 + 2 * k)
-            word = "PXH" if bear else "PXL"
-            # right of the last candle (empty space), so it never sits on top of the cycle labels at the cycle start
-            objs.append(({"object_type": "text", "price1": ctx.fmt(price), "time1": iso(ctx.now), "color": col,
-                          "text": f"{c['label'].replace(' cycle', '')} SMT {'▼' if bear else '▲'}  took {word}: "
-                                  f"{', '.join(s['leaders'])} · held: {', '.join(s['laggards'])}"}, None, None))
-            lines.append(f"  {c['label']:<12} {s['side']:8} {s['text']}")
-    if not lines:
-        lines.append("  no SMT divergence right now (nothing drawn)")
+        col, bear = SMT_COL[x["side"]], x["side"] == "bearish"
+        arrow = "▼" if bear else "▲"
+        if x["source"] == "cycle":
+            c = next(c for c in summ["cycles"] if c["kind"] == x["tf"])
+            q = c["per"][sym]
+            px, t = (q["high"], q["high_t"]) if bear else (q["low"], q["low_t"])
+            word = ("took PXH" if bear else "took PXL") if sym in x["leaders"] else ("held PXH" if bear else "held PXL")
+            y = px + atr * 0.35 if bear else px - atr * 0.35
+            objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(parse(t)), "color": col,
+                          "text": f"{arrow} {x['name']} SMT ({word})"}, None, None))
+        else:
+            e = next(e for e in summ["swings"] if e["tf"] == x["tf"] and e["t2"] == x["t"])
+            p = e["per"][sym]
+            objs.append(({"object_type": "trend_line", "price1": p["p1"], "time1": iso(parse(p["t1"])),
+                          "price2": p["p2"], "time2": iso(parse(p["t2"])), "color": col, "extend": False}, 2, "solid"))
+            y = p["p2"] + atr * 0.25 if bear else p["p2"] - atr * 0.25
+            objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(parse(p["t2"])), "color": col,
+                          "text": f"{arrow} {x['name']} SMT {p['label']}"}, None, None))
+        lines.append(f"  {role:9} {x['name']:6} {x['side']:8} {x['when']} NY  {x['text']}")
+    lines.append(f"  → {v.get('summary', 'no SMT')}")
     return objs, lines
 
 

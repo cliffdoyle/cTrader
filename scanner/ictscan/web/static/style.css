@@ -270,3 +270,18 @@ details.why summary { cursor:pointer; color:var(--muted); font-size:12px; } deta
 .smt-ev .st { font-size:11px; font-weight:700; } .st.ok { color:var(--bull); } .st.warn { color:var(--warn); } .st.dim { color:var(--dim); }
 @media (max-width:700px) { .smt-ev { grid-template-columns:auto auto 1fr; } .smt-ev .smt-labs, .smt-ev .st { grid-column:1 / -1; } }
 .plan-head .pill, .smt-tile-h .pill { white-space:nowrap; }
+
+/* SMT verdict (direction → timing → entry) */
+.smt-verdict { background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--line2); border-radius:14px; padding:14px 18px; display:grid; gap:12px; }
+.smt-verdict.bearish { border-left-color:var(--bear); background:linear-gradient(90deg, rgba(255,93,108,.08), var(--panel) 45%); }
+.smt-verdict.bullish { border-left-color:var(--bull); background:linear-gradient(90deg, rgba(34,195,154,.08), var(--panel) 45%); }
+.smt-v-head { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline; } .smt-v-head b { font-size:15px; }
+.smt-steps { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); }
+.smt-step { display:flex; gap:10px; align-items:flex-start; background:#141c28; border-radius:10px; padding:10px 12px; border:1px solid var(--line); }
+.smt-step .n { flex:none; width:24px; height:24px; border-radius:50%; display:grid; place-items:center; font-weight:800; font-size:12px; background:#1f2938; color:var(--muted); }
+.smt-step.done .n { background:var(--bull-bg); color:var(--bull); } .smt-step.done .n::after { content:''; }
+.smt-step b { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
+.smt-step .small { margin-top:3px; color:var(--text); }
+.warn { color:var(--warn); }
+details.smt-more { margin-top:10px; } details.smt-more > summary { cursor:pointer; color:var(--info); font-size:13px; margin-bottom:10px; }
+.smt-guide { margin:4px 0 12px; line-height:1.55; }

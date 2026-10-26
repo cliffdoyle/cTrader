@@ -79,6 +79,9 @@ WEB_PORT = int(os.environ.get("ICTSCAN_PORT", "8765"))
 # Dashboard login (HTTP Basic). Required whenever the dashboard is reachable from the internet.
 DASH_USER = os.environ.get("ICTSCAN_USER", "admin")
 DASH_PASSWORD = os.environ.get("ICTSCAN_PASSWORD", "")
+# Read-only key for the chart add-ons (cTrader indicator / MT5 expert) that fetch /api/feed/<symbol>. Empty = the feed
+# needs the dashboard login instead (or is open when the dashboard has no password, e.g. on the PC).
+FEED_TOKEN = os.environ.get("ICTSCAN_FEED_TOKEN", "")
 # "Draw on cTrader" buttons: the PC scanner (desktop MCP source) accepts drawing requests on /api/draw from these
 # dashboard origins only (the hosted dashboard calls http://127.0.0.1:<port> in the user's browser).
 DRAW_BRIDGE = os.environ.get("ICTSCAN_DRAW_BRIDGE", "1" if DATA_SOURCE == "mcp" else "0") == "1"

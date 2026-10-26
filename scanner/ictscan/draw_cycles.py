@@ -22,7 +22,9 @@ from .mcp import MCPError
 
 NY = ZoneInfo("America/New_York")
 COLORS = {"month": "#E3E9F1", "week": "#B388FF", "day": "#5AA9FF", "90m": "#F5B84A"}
-BOX_COLORS = ("#F5B84A", "#5AA9FF")  # AM windows, PM windows
+# One colour per 90-minute window: pre-open violet, 08:30 amber (news/open), 10:00 teal, lunch grey, 13:00 blue, 14:30 pink
+WINDOW_COLORS = ("9B7BFF", "F5B84A", "2BD4A4", "8A97A8", "5AA9FF", "FF7A9A")
+FILL_ALPHA, LINE_ALPHA = "26", "B3"   # ≈15 % fill so candles stay visible, ≈70 % outline
 SHORT = {"month": "M", "week": "W", "day": "D", "90m": "90m"}
 
 
@@ -31,10 +33,11 @@ def iso(t):
 
 
 def plan(ctx, kinds):
-    """Objects to draw: per kind PXH, PXL, EQ lines across the current cycle and two labels."""
+    """Objects to draw: per kind PXH, PXL (solid) and EQ (dotted) across the current cycle; one label per price level,
+    placed just right of the last candle (empty space) and merged when two cycles share a price."""
     summ = cycle_summary(ctx.bars, ctx.now, ctx.price, ctx.fmt)
-    pad = ctx.atr["h1"][-1] * 0.12
-    objs, lines = [], []
+    atr = ctx.atr["h1"][-1]
+    objs, lines, labels = [], [], {}
     for kind in kinds:
         c = summ.get(kind)
         if not c:
@@ -44,20 +47,29 @@ def plan(ctx, kinds):
         t0, t1 = parse(span["start"]), parse(span["end"])
         if c["current"] is None and c.get("next_window"):  # between 90m windows: show the last window's levels over it
             t0, t1 = parse(p["start"]), parse(p["end"])
-        tag = SHORT[kind]
         for name, price, thick, style in (("PXH", p["high"], 2, "solid"), ("PXL", p["low"], 2, "solid"), ("EQ", p["eq"], 1, "dots")):
             objs.append(({"object_type": "trend_line", "price1": price, "time1": iso(t0), "price2": price, "time2": iso(t1),
                           "color": color, "extend": False}, thick, style))
-        objs.append(({"object_type": "text", "price1": ctx.fmt(p["high"] + pad), "time1": iso(t0), "color": color,
-                      "text": f"{tag} PXH {p['high']}"}, None, None))
-        objs.append(({"object_type": "text", "price1": ctx.fmt(p["low"] - pad), "time1": iso(t0), "color": color,
-                      "text": f"{tag} PXL {p['low']}"}, None, None))
+        for side, price in (("PXH", p["high"]), ("PXL", p["low"])):
+            lab = labels.setdefault((side, price), {"tags": [], "color": color, "side": side, "price": price})
+            lab["tags"].append(SHORT[kind])
         lines.append(f"  {c['label']:<12} PXH {p['high']:<10} EQ {p['eq']:<10} PXL {p['low']:<10} → {c['read']['note']}")
+    # stack labels so they never overlap: at least 0.3 × H1 ATR apart, highs nudged up, lows nudged down
+    gap, placed = atr * 0.3, []
+    for lab in sorted(labels.values(), key=lambda x: -x["price"]):
+        y = lab["price"] + (atr * 0.08 if lab["side"] == "PXH" else -atr * 0.08)
+        if placed and placed[-1] - y < gap:
+            y = placed[-1] - gap
+        placed.append(y)
+        objs.append(({"object_type": "text", "price1": ctx.fmt(y), "time1": iso(ctx.now), "color": lab["color"],
+                      "text": f"{' · '.join(lab['tags'])} {lab['side']} {lab['price']}"}, None, None))
     return objs, lines
 
 
-def plan_boxes(ctx):
-    """The 90-minute windows of the latest trading day as boxes (window high→low, start→end) with a start-time label."""
+def plan_boxes(ctx, style="filled"):
+    """The 90-minute windows of the latest trading day as boxes (window high→low, start→end) with a label.
+    style "filled" = TradingView-like session boxes: soft translucent fill (#AARRGGBB), crisp outline, one colour per
+    window, label "08:30 · 163 pts"; style "outline" = outline only."""
     cyc = build_cycles(ctx.bars["m5"], "90m", ctx.now)
     if not cyc:
         return [], []
@@ -66,15 +78,19 @@ def plan_boxes(ctx):
     objs, lines = [], []
     for c in (c for c in cyc if c["key"][0] == day):
         i = c["key"][1]
-        color = BOX_COLORS[0] if i < 3 else BOX_COLORS[1]
-        end = min(c["end"], ctx.now)
+        rgb = WINDOW_COLORS[i]
+        end = c["end"]  # full window width, also for the forming window (its height grows on each redraw)
         start_ny = c["start"].astimezone(NY).strftime("%H:%M")
-        objs.append(({"object_type": "rectangle", "price1": c["high"], "time1": iso(c["start"]), "price2": c["low"],
-                      "time2": iso(end), "color": color, "fill": False}, 1, "solid"))
-        objs.append(({"object_type": "text", "price1": ctx.fmt(c["high"] + pad), "time1": iso(c["start"]), "color": color,
-                      "text": f"{start_ny}"}, None, None))
+        forming = c["end"] > ctx.now
+        box = {"object_type": "rectangle", "price1": c["high"], "time1": iso(c["start"]), "price2": c["low"], "time2": iso(end)}
+        if style == "filled":
+            objs.append(({**box, "color": f"#{FILL_ALPHA}{rgb}", "fill": True}, None, None))
+        objs.append(({**box, "color": f"#{LINE_ALPHA}{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
+        rng = ctx.fmt(c["high"] - c["low"])
+        objs.append(({"object_type": "text", "price1": ctx.fmt(c["high"] + pad), "time1": iso(c["start"]), "color": f"#{rgb}",
+                      "text": f"{start_ny} · {rng}{' …' if forming else ''}"}, None, None))
         lines.append(f"  {start_ny}–{c['end'].astimezone(NY):%H:%M} NY  high {ctx.fmt(c['high'])}  low {ctx.fmt(c['low'])}"
-                     + ("  (forming)" if c["end"] > ctx.now else ""))
+                     + ("  (forming)" if forming else ""))
     return objs, lines
 
 

@@ -70,6 +70,25 @@ class CycleSmtTests(unittest.TestCase):
         self.assertFalse(c["per"]["US30"]["took_high"])
         summ = smt_summary({k: {"m5": v["m5"], "m15": [], "h1": [], "h4": []} for k, v in bars.items()}, now)
         self.assertEqual(summ["headline"]["side"], "bearish")
+        v = summ["verdict"]
+        self.assertEqual((v["bias"]["name"], v["direction"], v["trade_on"]), ("90-min", "sell", ["US30"]))
+
+
+class VerdictTests(unittest.TestCase):
+    def x(self, tf, side, t, w):
+        return {"source": "swing", "tf": tf, "name": tf, "weight": w, "side": side, "t": t, "status": "watch",
+                "leaders": ["NAS100"], "laggards": ["US30"], "text": "", "trade": "", "when": ""}
+
+    def test_bias_needs_bigger_smt_and_trigger_must_agree_and_follow(self):
+        from ictscan.engine.smt import smt_verdict
+        self.assertEqual(smt_verdict([self.x("m5", "bearish", "2026-10-26T12:00", 1)])["state"], "minor")
+        ranked = [self.x("h1", "bearish", "2026-10-26T11:00", 3), self.x("m5", "bullish", "2026-10-26T12:00", 1),
+                  self.x("m5", "bearish", "2026-10-26T10:00", 1)]
+        v = smt_verdict(ranked)
+        self.assertEqual((v["state"], v["trigger"]), ("wait", None))   # bullish 5m disagrees; bearish 5m came before the 1H SMT
+        ranked.append(self.x("m15", "bearish", "2026-10-26T12:30", 2))
+        v = smt_verdict(ranked)
+        self.assertEqual((v["state"], v["trigger"]["tf"]), ("ready", "m15"))
 
 
 def asgi(app, method, path, headers=None, body=b""):
