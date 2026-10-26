@@ -74,6 +74,8 @@ namespace cAlgo.Indicators
         private string _lastBody, _cacheKey;
         private string _status = "ICT Scanner · connecting…";
         private Border _card;
+        // labels pushed one text row further out: name → (price at the box edge, +1 above / -1 below); re-placed on zoom
+        private readonly Dictionary<string, Tuple<double, int>> _rowLabels = new Dictionary<string, Tuple<double, int>>();
 
         protected override void Initialize()
         {
@@ -81,8 +83,9 @@ namespace cAlgo.Indicators
             Prefix = "ICTS" + (InstanceId ?? "").Replace("-", "").PadRight(6, '0').Substring(0, 6) + "_";
             _m5 = MarketData.GetBars(TimeFrame.Minute5);
             _cacheKey = string.Join("|", FeedSymbol(), Groups(), Kinds, Sessions);
-            Chart.ZoomChanged += _ => EnsureDrawn();
-            Chart.ScrollChanged += _ => EnsureDrawn();
+            Chart.ZoomChanged += _ => { EnsureDrawn(); PlaceRowLabels(); };
+            Chart.ScrollChanged += _ => { EnsureDrawn(); PlaceRowLabels(); };
+            Chart.SizeChanged += _ => PlaceRowLabels();
             Chart.ObjectsRemoved += _ => EnsureDrawn();
             string cached;
             if (Cache.TryGetValue(_cacheKey, out cached))
@@ -225,6 +228,9 @@ namespace cAlgo.Indicators
                         Chart.RemoveObject(old);
                 _drawn.Clear();
                 _drawn.UnionWith(keep);
+                foreach (var gone in _rowLabels.Keys.Where(k => !keep.Contains(k)).ToList())
+                    _rowLabels.Remove(gone);
+                PlaceRowLabels();
                 DrawCard(panel);
                 _status = string.Format(CultureInfo.InvariantCulture, "ICT Scanner · {0} · {1} objects · {2:HH:mm} UTC{3}", scannerSym,
                     keep.Count, Server.TimeInUtc, offset != 0 ? string.Format(CultureInfo.InvariantCulture, " · aligned {0:+0.##;-0.##}", offset) : "");
@@ -258,12 +264,32 @@ namespace cAlgo.Indicators
                     l.IsInteractive = false;
                     break;
                 case "T":
-                    var t = Chart.DrawText(name, string.Join("|", f, 12, f.Length - 12), f[11] == "1" ? RightOfLastBar() : t1, p1, color);
+                    var flags = int.Parse(f[11], CultureInfo.InvariantCulture);
+                    var t = Chart.DrawText(name, string.Join("|", f, 12, f.Length - 12), (flags & 1) != 0 ? RightOfLastBar() : t1, p1, color);
+                    if ((flags & 2) != 0)
+                        _rowLabels[name] = Tuple.Create(p1, f[10] == "below" ? -1 : 1);
+                    else
+                        _rowLabels.Remove(name);
                     t.FontSize = FontSize;
                     t.IsInteractive = false;
                     t.HorizontalAlignment = HorizontalAlignment.Right;   // text runs to the right of its time
                     t.VerticalAlignment = f[10] == "below" ? VerticalAlignment.Bottom : f[10] == "middle" ? VerticalAlignment.Center : VerticalAlignment.Top;
                     break;
+            }
+        }
+
+        // Neighbouring boxes put every other label one text row further out; a row is a fixed number of pixels, so its
+        // price distance depends on the zoom and is recomputed whenever the view changes.
+        private void PlaceRowLabels()
+        {
+            if (_rowLabels.Count == 0 || Chart.Height <= 0 || Chart.TopY <= Chart.BottomY)
+                return;
+            var row = (Chart.TopY - Chart.BottomY) / Chart.Height * FontSize * 1.75;
+            foreach (var kv in _rowLabels)
+            {
+                var t = Chart.FindObject(kv.Key) as ChartText;
+                if (t != null)
+                    t.Y = kv.Value.Item1 + kv.Value.Item2 * row;
             }
         }
 

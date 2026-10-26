@@ -234,6 +234,9 @@ def plan_sessions(ctx, style="kz"):
         box = {"object_type": "rectangle", "price1": r["high"], "time1": iso(t0), "price2": r["low"], "time2": iso(t1)}
         objs.append(({**box, "color": f"#1F{rgb}", "fill": True}, None, None))
         objs.append(({**box, "color": f"#99{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
+        from .draw_cycles import open_close_marks
+        marks, oc = open_close_marks(ctx, t0, t1, r["open"], r["close"], rgb, forming)
+        objs += marks
         notes = {}
         for side, price in (("high", r["high"]), ("low", r["low"])):
             tk = None if forming else _taken(m5, side, price, t1, now)
@@ -244,10 +247,11 @@ def plan_sessions(ctx, style="kz"):
         objs.append(({"object_type": "text", "price1": ctx.fmt(r["high"] + pad), "time1": iso(t0), "color": f"#{rgb}",
                       "anchor": "above", "text": f"{name.upper()}  H {ctx.fmt(r['high'])}{notes['high']}"}, None, None))
         objs.append(({"object_type": "text", "price1": ctx.fmt(r["low"] - pad), "time1": iso(t0), "color": f"#{rgb}",
-                      "anchor": "below", "text": f"L {ctx.fmt(r['low'])}{notes['low']}"}, None, None))
+                      "anchor": "below", "text": f"L {ctx.fmt(r['low'])}{notes['low']}   ·   {oc}"}, None, None))
         lines.append(f"  {name:7} {t0.astimezone(_NY):%a %H:%M}–{t1.astimezone(_NY):%H:%M} NY  H {ctx.fmt(r['high'])}{notes['high']}"
-                     f"  L {ctx.fmt(r['low'])}{notes['low']}" + ("  (forming)" if forming else ""))
+                     f"  L {ctx.fmt(r['low'])}{notes['low']}  {oc}" + ("  (forming)" if forming else ""))
     return objs, lines
+
 
 def draw(symbol, what, kinds=None, untouched_only=False, timeframe=None, dry_run=False, store=None, client=None):
     """Draw (or clear) one kind for one symbol. Returns a summary dict; raises DrawError / MCPError."""
@@ -288,7 +292,7 @@ def draw(symbol, what, kinds=None, untouched_only=False, timeframe=None, dry_run
             if obj["object_type"] == "panel":  # corner panels exist only in the chart add-ons
                 continue
             chart.ensure()
-            res = client.call("add_chart_object", {k: v for k, v in obj.items() if k not in ("anchor", "right")})
+            res = client.call("add_chart_object", {k: v for k, v in obj.items() if k not in ("anchor", "right", "row")})
             oid = res.get("objectId", "")
             if not oid.startswith("MCP_"):
                 raise DrawError(f"Unexpected response: {res}")

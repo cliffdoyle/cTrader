@@ -66,15 +66,29 @@ def plan(ctx, kinds):
     return objs, lines
 
 
+def open_close_marks(ctx, t0, t1, o, c, rgb, forming):
+    """Short thick ticks for the session's opening price (left edge) and closing price (right edge), and their text."""
+    tick = (t1 - t0) * 0.16
+    objs = [({"object_type": "trend_line", "price1": o, "time1": iso(t0), "price2": o, "time2": iso(t0 + tick),
+              "color": f"#FF{rgb}", "extend": False}, 3, "solid")]
+    if not forming:
+        objs.append(({"object_type": "trend_line", "price1": c, "time1": iso(t1 - tick), "price2": c, "time2": iso(t1),
+                      "color": f"#FF{rgb}", "extend": False}, 3, "solid"))
+    text = f"O {ctx.fmt(o)}" + ("" if forming else f" → C {ctx.fmt(c)}")
+    return objs, text
+
+
 def plan_boxes(ctx, style="filled"):
-    """The 90-minute windows of the latest trading day as boxes (window high→low, start→end) with a label.
+    """The 90-minute windows of the latest trading day as boxes (window high→low, start→end).
     style "filled" = TradingView-like session boxes: soft translucent fill (#AARRGGBB), crisp outline, one colour per
-    window, label "08:30 · 163 pts"; style "outline" = outline only."""
+    window; style "outline" = outline only. Labels: "08:30  H …" above, "L … · O … → C …" below, with ticks marking the
+    window's opening and closing price; every other window's labels sit one text row further out so neighbours never
+    collide (the add-on converts the row to price at the current zoom)."""
     cyc = build_cycles(ctx.bars["m5"], "90m", ctx.now)
     if not cyc:
         return [], []
     day = cyc[-1]["key"][0]
-    pad = ctx.atr["h1"][-1] * 0.10
+    pad2 = ctx.atr["h1"][-1] * 0.03
     objs, lines = [], []
     for c in (c for c in cyc if c["key"][0] == day):
         i = c["key"][1]
@@ -82,19 +96,20 @@ def plan_boxes(ctx, style="filled"):
         end = c["end"]  # full window width, also for the forming window (its height grows on each redraw)
         start_ny = c["start"].astimezone(NY).strftime("%H:%M")
         forming = c["end"] > ctx.now
+        row = i % 2  # alternate label rows for neighbouring windows
         box = {"object_type": "rectangle", "price1": c["high"], "time1": iso(c["start"]), "price2": c["low"], "time2": iso(end)}
         if style == "filled":
             objs.append(({**box, "color": f"#{FILL_ALPHA}{rgb}", "fill": True}, None, None))
         objs.append(({**box, "color": f"#{LINE_ALPHA}{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
-        pad2 = ctx.atr["h1"][-1] * 0.03
+        marks, oc = open_close_marks(ctx, c["start"], end, c["open"], c["close"], rgb, forming)
+        objs += marks
         objs.append(({"object_type": "text", "price1": ctx.fmt(c["high"] + pad2), "time1": iso(c["start"]), "color": f"#{rgb}",
-                      "anchor": "above", "text": f"{start_ny}  H {ctx.fmt(c['high'])}{' …' if forming else ''}"}, None, None))
+                      "anchor": "above", "row": row, "text": f"{start_ny}  H {ctx.fmt(c['high'])}{' …' if forming else ''}"}, None, None))
         objs.append(({"object_type": "text", "price1": ctx.fmt(c["low"] - pad2), "time1": iso(c["start"]), "color": f"#{rgb}",
-                      "anchor": "below", "text": f"L {ctx.fmt(c['low'])}"}, None, None))
-        lines.append(f"  {start_ny}–{c['end'].astimezone(NY):%H:%M} NY  high {ctx.fmt(c['high'])}  low {ctx.fmt(c['low'])}"
+                      "anchor": "below", "row": row, "text": f"L {ctx.fmt(c['low'])} · {oc}"}, None, None))
+        lines.append(f"  {start_ny}–{c['end'].astimezone(NY):%H:%M} NY  high {ctx.fmt(c['high'])}  low {ctx.fmt(c['low'])}  {oc}"
                      + ("  (forming)" if forming else ""))
     return objs, lines
-
 
 def main():
     ap = argparse.ArgumentParser()

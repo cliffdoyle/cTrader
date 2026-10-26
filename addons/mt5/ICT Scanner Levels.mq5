@@ -13,7 +13,7 @@
 //| WebRequest for listed URL" and add https://scanner.zuristay.com  |
 //+------------------------------------------------------------------+
 #property copyright "ICT Scanner"
-#property version   "1.20"
+#property version   "1.30"
 #property description "Draws the ICT scanner's 90-min boxes, PXH/PXL and SMT. Never trades."
 
 enum SessionTimes { KillZones = 0, Continuous = 1 };
@@ -35,6 +35,10 @@ input bool   InpAutoAlign  = true;                          // Align prices to t
 #define PREFIX "ICTS_"
 string g_last_body = "";
 string g_status = "ICT Scanner - connecting...";
+// labels pushed one text row further out (neighbouring 90-min boxes); re-placed when the chart is zoomed or scrolled
+string g_row_names[];
+double g_row_base[];
+int    g_row_dir[];
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -54,6 +58,28 @@ void OnDeinit(const int reason)
 void OnTick() {}
 
 void OnTimer() { Fetch(); }
+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+  {
+   if(id == CHARTEVENT_CHART_CHANGE)
+      PlaceRowLabels();
+  }
+
+void PlaceRowLabels()
+  {
+   int n = ArraySize(g_row_names);
+   if(n == 0)
+      return;
+   double top = ChartGetDouble(0, CHART_PRICE_MAX), bottom = ChartGetDouble(0, CHART_PRICE_MIN);
+   long h = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+   if(h <= 0 || top <= bottom)
+      return;
+   double row = (top - bottom) / h * InpFontSize * 1.9;
+   for(int i = 0; i < n; i++)
+      if(ObjectFind(0, g_row_names[i]) >= 0)
+         ObjectSetDouble(0, g_row_names[i], OBJPROP_PRICE, 0, g_row_base[i] + g_row_dir[i] * row);
+   ChartRedraw();
+  }
 
 //+------------------------------------------------------------------+
 string Groups()
@@ -160,6 +186,9 @@ void Render(const string body)
    string scanner_sym = "";
    long shift = ServerShift();
    int panel_line = 0;
+   ArrayResize(g_row_names, 0);
+   ArrayResize(g_row_base, 0);
+   ArrayResize(g_row_dir, 0);
    for(int i = 0; i < n; i++)
      {
       string line = lines[i];
@@ -223,6 +252,7 @@ void Render(const string body)
                            TimeToString(TimeGMT(), TIME_MINUTES),
                            offset != 0 ? StringFormat(" - aligned %+.2f", offset) : "");
    Status(g_status, clrGray);
+   PlaceRowLabels();
    ChartRedraw();
   }
 
@@ -264,8 +294,19 @@ bool Draw(const string name, string &f[], int k, double offset, long shift)
       string text = f[12];
       for(int i = 13; i < k; i++)
          text += "|" + f[i];
-      if(f[11] == "1")   // right of the last candle (empty space)
+      int flags = (int)StringToInteger(f[11]);
+      if((flags & 1) != 0)   // right of the last candle (empty space)
          t1 = iTime(_Symbol, _Period, 0) + 2 * PeriodSeconds(_Period);
+      if((flags & 2) != 0)   // one text row further out, placed by PlaceRowLabels()
+        {
+         int r = ArraySize(g_row_names);
+         ArrayResize(g_row_names, r + 1);
+         ArrayResize(g_row_base, r + 1);
+         ArrayResize(g_row_dir, r + 1);
+         g_row_names[r] = name;
+         g_row_base[r] = p1;
+         g_row_dir[r] = f[10] == "below" ? -1 : 1;
+        }
       if(ObjectFind(0, name) < 0 && !ObjectCreate(0, name, OBJ_TEXT, 0, t1, p1))
          return false;
       ObjectMove(0, name, 0, t1, p1);

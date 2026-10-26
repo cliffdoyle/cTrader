@@ -8,7 +8,8 @@ GET /api/feed/<symbol>?groups=sessions,boxes,cycles,levels,smt&kinds=week,day,90
 
 kind R = rectangle, L = line, T = text (t2/p2 empty), P = corner panel line (top-right, in order; no time/price).
 Times are unix seconds UTC. style = solid | dash | dot for R/L; for T/P it is the text anchor (above | below | middle)
-and extend = 1 means "place right of the last candle" (the add-on picks the time for its own timeframe).
+and extend is a flag set: 1 = "place right of the last candle" (the add-on picks the time for its own timeframe),
+2 = "one text row further out" (the add-on converts a row to price at the current zoom so neighbouring labels never collide).
 Plain text so MQL5 can parse it without a JSON library. The objects are exactly what the dashboard draw buttons make
 (`drawing.plan_for`), built from the scanner's stored candles — no cTrader desktop / MCP involved.
 """
@@ -73,8 +74,9 @@ def to_lines(group, objs, fmt):
         p1 = str(fmt(o["price1"])) if o.get("price1") is not None else "0"
         t2 = str(_unix(o["time2"])) if o.get("time2") else ""
         p2 = str(fmt(o["price2"])) if o.get("price2") is not None else ""
-        if kind in ("T", "P"):  # text: style = anchor (above | below | middle), extend = place right of the last candle
-            st, ext = o.get("anchor", "above"), "1" if o.get("right") else "0"
+        if kind in ("T", "P"):  # text: style = anchor (above | below | middle); extend = flags 1 = right of the last
+            st = o.get("anchor", "above")  # candle, 2 = one text row further out (neighbouring labels)
+            ext = str((1 if o.get("right") else 0) | (2 if o.get("row") else 0))
         else:
             st, ext = STYLE.get(style, "solid"), "1" if o.get("extend") else "0"
         out.append("|".join([kind, group, f"{group}{i}", t1, p1, t2, p2, _argb(o.get("color")), "1" if o.get("fill") else "0",
