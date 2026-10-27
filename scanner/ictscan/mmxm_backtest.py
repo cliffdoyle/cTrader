@@ -79,15 +79,17 @@ def main():
     print(f"Data: {m5[0].t:%d %b %Y} → {m5[-1].t:%d %b %Y} (test from {START:%d %b %Y}; A < {SPLIT:%d %b %Y} ≤ B)")
     buffers = {s: SYMBOLS[s]["buffer"] for s in mmxm.INDICES}
     costs = {s: COSTS[s] for s in mmxm.INDICES}
+    pips = {s: SYMBOLS[s]["pip"] for s in mmxm.INDICES}
     variants = [
         ("AS SPECIFIED (SMT required, adds, stop below MSS FVG, target = original consolidation)", {}),
+        ("old tight stop (no minimum stop distance)", {"min_stop_pips": 0}),
         ("SMT off (to see what SMT adds)", {"smt": "off"}),
         ("no adds", {"max_adds": 0}),
         ("stop below the reversal low", {"stop": "low"}),
     ]
     store = {}
     for label, ov in variants:
-        res, funnels = mmxm.run(bars, ov, buffers=buffers, costs=costs)
+        res, funnels = mmxm.run(bars, ov, buffers=buffers, costs=costs, pips=pips)
         store[label] = (res, funnels)
         tr = report(label, res)
         for mode in ("intraday", "swing"):

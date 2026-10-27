@@ -28,6 +28,11 @@ def in_killzone(t):
     return any(h0 * 60 + m0 <= m < h1 * 60 + m1 for h0, m0, h1, m1 in KILLZONES)
 
 
+def min_stop_pips(sym):
+    v = mmxm.MMXM_DEFAULTS["min_stop_pips"]
+    return v.get(sym, 0) if isinstance(v, dict) else v
+
+
 def to_record(r):
     sym, buy = r["symbol"], r["dir"] == "buy"
     dg = SYMBOLS[sym]["digits"]
@@ -55,7 +60,9 @@ def to_record(r):
              f"structure shift broke {f(r['H'])} with a {d} FVG {f(r['fvg'][0])}–{f(r['fvg'][1])}.",
              f"SMT: {smt_txt}.",
              f"Plan (as specified): {word} limit {f(r['entry'])} (MSS FVG {'upper' if buy else 'lower'} edge), stop "
-             f"{f(r['stop'])}, target {f(r['T'])} ({r['rr']:.1f}R). Adds on re-accumulation (max {mmxm.MMXM_DEFAULTS['max_adds']}, "
+             f"{f(r['stop'])} ({abs(r['entry'] - r['stop']):.1f} {SYMBOLS[sym]['unit']}; past the MSS FVG and at least "
+             f"{min_stop_pips(sym):g} {SYMBOLS[sym]['unit']} from the entry), target {f(r['T'])} ({r['rr']:.1f}R). Adds on re-accumulation "
+             f"(max {mmxm.MMXM_DEFAULTS['max_adds']}, "
              f"{mmxm.MMXM_DEFAULTS['add_risk']:g}R each); all stops trail to each add's stop.",
              f"Backtest note: a stop beyond the reversal {opp} ({f(r['L_stop'])}) tested better than the specified stop "
              f"(swing version) — information only."]}
@@ -90,6 +97,7 @@ def to_record(r):
 
 def live_setups(bars_by_sym, now, lookback_days=7):
     buffers = {s: SYMBOLS[s]["buffer"] for s in mmxm.INDICES}
-    res, _ = mmxm.run(bars_by_sym, buffers=buffers, costs=buffers)
+    pips = {s: SYMBOLS[s]["pip"] for s in mmxm.INDICES}
+    res, _ = mmxm.run(bars_by_sym, buffers=buffers, costs=buffers, pips=pips)
     since = now - timedelta(days=lookback_days)
     return [to_record(r) for r in res if r["conf_t"] >= since]

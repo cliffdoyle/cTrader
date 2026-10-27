@@ -63,8 +63,11 @@ News is not checked — look at the economic calendar before acting.
 The user's chosen model: ICT market maker buy/sell models with SMT across NAS100/US30/US500, rules in
 [strategy-mmxm.md](../.github/skills/ctrader-mcp/references/strategy-mmxm.md). Detector `engine/mmxm.py` (the sell model
 is the buy logic on price-mirrored series), dashboard records `engine/mmxm_live.py`, backtest
-`python -m ictscan.mmxm_backtest [--db hist-indices.db]`. Built exactly as specified (both timeframes, stop below the MSS
-FVG); MMXM alerts pop up while S1–S4 stay muted (`ALERT_SETUPS`). Backtest (Oct 2025 – Oct 2026, costs included):
+`python -m ictscan.mmxm_backtest [--db hist-indices.db]`. Built as specified (both timeframes, stop below the MSS
+FVG) except that every stop is at least `min_stop_pips` from its entry (NAS100 15, US30 20, US500 20 points, in
+`engine/mmxm.py`); MMXM alerts pop up while S1–S4 stay muted (`ALERT_SETUPS`). Backtest (Oct 2025 – Oct 2026, costs
+included) with that minimum stop: +83R over 541 trades (max drawdown −60R; the old tight stop: −3R, max drawdown −111R).
+Before the minimum stop:
 as specified swing +0.93R/trade (113 trades, but only +0.2R without the 3 best) and intraday −0.25R (428 trades); the
 swing version with the stop beyond the reversal extreme was the only one positive in both halves after capping outliers.
 The dashboard shows only NAS100/US30/US500 and only MMXM signals (`DASHBOARD_SYMBOLS` / `DASHBOARD_SETUPS` in

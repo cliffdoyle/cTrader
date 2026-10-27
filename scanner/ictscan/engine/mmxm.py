@@ -19,11 +19,14 @@ MMXM_DEFAULTS = {
               "fill_h": 12, "hold_h": 240, "bear_fvg_h": 24},
     "smt": "required",      # required | off | report
     "stop": "fvg",          # fvg = below the MSS FVG | low = below the reversal low
+    "min_stop_pips": {"NAS100": 15, "US30": 20, "US500": 20},  # every stop (entry + adds) at least this far from its
+    # entry (user 2026-10-27: 15–20 pips; backtest 2025-10 → 2026-10 best mix). A plain number applies to all; 0 = off
     "max_adds": 2,
     "add_risk": 0.5,
     "fvg_mult": 1.5,
 }
 INDICES = ("NAS100", "US30", "US500")
+RULES_VERSION = "2026-10-27 min stop"  # bump when a change re-scores past setups (the runner then backfills them as read)
 
 
 def mirror(bars):
@@ -97,7 +100,12 @@ def smt_check(series_by_sym, t_ref0, t_ref1, t_rev1):
     return took
 
 
-def detect(series_by_sym, symbol, mode, cfg, buffer, sign):
+def stop_for(entry, structural, min_dist):
+    """The structural stop, pushed further away when it is closer than `min_dist` to the entry (buy-side space)."""
+    return min(structural, entry - min_dist)
+
+
+def detect(series_by_sym, symbol, mode, cfg, buffer, sign, min_stop=0.0):
     """All MMXM buy setups for `symbol` on (possibly mirrored) series. Returns (setups, funnel)."""
     p = cfg[mode]
     S = series_by_sym[symbol]
@@ -164,7 +172,7 @@ def detect(series_by_sym, symbol, mode, cfg, buffer, sign):
             continue
         used_L.update((Li, ("g", g.i)))
         entry = g.high
-        stop = (g.low if cfg["stop"] == "fvg" else L.l) - buffer
+        stop = stop_for(entry, (g.low if cfg["stop"] == "fvg" else L.l) - buffer, min_stop)
         if not (stop < entry < T):
             continue
         out.append({"symbol": symbol, "mode": mode, "sign": sign, "H": H.price, "H_t": ex[H.i].t, "L": L.l, "L_t": L.t,
@@ -174,7 +182,7 @@ def detect(series_by_sym, symbol, mode, cfg, buffer, sign):
     return out, funnel
 
 
-def simulate(S, st, cfg, mode, cost, buffer):
+def simulate(S, st, cfg, mode, cost, buffer, min_stop=0.0):
     """Fill the low-risk entry, add on re-accumulation, exit at the terminus/stop/time. Result in R of the first unit.
     `events` records the timeline (prices in this series' space): fill, adds, exit. Live states: outcome "pending" (limit
     still waiting) or "open" (in the trade)."""
@@ -233,18 +241,22 @@ def simulate(S, st, cfg, mode, cost, buffer):
         if adds < cfg["max_adds"] and pending is None and last_hi is not None and last_hi.i >= fi and b.c > last_hi.price:
             g0 = bisect.bisect_left(S.bull_i, last_hi.i)
             leg = [g for g in S.bull_fvg[g0:bisect.bisect_right(S.bull_i, m)] if g.k <= m + 1]
-            if leg and leg[-1].low - buffer > cur and leg[-1].high < st["T"]:
+            s_add = stop_for(leg[-1].high, leg[-1].low - buffer, min_stop) if leg else None
+            if leg and s_add > cur and leg[-1].high < st["T"]:
                 g = leg[-1]
-                pending = (g.high, g.low - buffer, m, ex[m].end + timedelta(hours=p["fill_h"]))
-                events.append(("add_limit", ex[m].end, g.high, g.low - buffer))
+                pending = (g.high, s_add, m, ex[m].end + timedelta(hours=p["fill_h"]))
+                events.append(("add_limit", ex[m].end, g.high, s_add))
             last_hi = None
     return {**st, "outcome": "open", "adds": adds, "fill_t": ex[fi].t, "stop_now": cur, "events": events,
             "add_pending": (pending[0], pending[1]) if pending else None}
 
 
-def run(bars_by_sym, cfg=None, modes=("intraday", "swing"), buffers=None, costs=None):
-    """Detect and simulate MMXM buy and sell setups for every index in `bars_by_sym` (symbol → {tf: [Bar]})."""
+def run(bars_by_sym, cfg=None, modes=("intraday", "swing"), buffers=None, costs=None, pips=None):
+    """Detect and simulate MMXM buy and sell setups for every index in `bars_by_sym` (symbol → {tf: [Bar]}).
+    `pips` (symbol → pip size, default 1.0 = index points) converts cfg["min_stop_pips"] into price."""
     cfg = {**MMXM_DEFAULTS, **(cfg or {})}
+    min_stop = {s: (cfg["min_stop_pips"].get(s, 0) if isinstance(cfg["min_stop_pips"], dict) else cfg["min_stop_pips"])
+                * (pips or {}).get(s, 1.0) for s in bars_by_sym}
     results, funnels = [], {}
     for mode in modes:
         p = cfg[mode]
@@ -254,10 +266,10 @@ def run(bars_by_sym, cfg=None, modes=("intraday", "swing"), buffers=None, costs=
                 use = bars if sign == 1 else {tf: mirror(b) for tf, b in bars.items()}
                 ser[s] = Series(use, p["exec"], p["atr_tf"], p["levels"], cfg["fvg_mult"])
             for s in bars_by_sym:
-                setups, fun = detect(ser, s, mode, cfg, buffers[s], sign)
+                setups, fun = detect(ser, s, mode, cfg, buffers[s], sign, min_stop[s])
                 funnels[(mode, "buy" if sign == 1 else "sell", s)] = fun
                 for st in setups:
-                    r = simulate(ser[s], st, cfg, mode, costs[s], buffers[s])
+                    r = simulate(ser[s], st, cfg, mode, costs[s], buffers[s], min_stop[s])
                     r["L_stop"] = st["L"] - buffers[s]  # the wider stop the backtest favoured (shown as information)
                     if sign == -1:
                         for k in ("H", "L", "T", "entry", "stop", "array_lo", "array_hi", "exit", "stop_now", "L_stop"):

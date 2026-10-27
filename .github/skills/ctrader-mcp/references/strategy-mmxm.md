@@ -29,10 +29,11 @@ S1–S4 as the user's main model. Where the lecture is discretionary, the mechan
    holds). Sell model: the same with highs.
 7. **Low-risk entry.** Buy limit at the upper edge of the MSS FVG (first retracement into it), valid for ⚙ 2 h intraday /
    12 h swing. Cancelled if a candle closes below L or price reaches T first (missed).
-   Stop ⚙: below the MSS FVG's lower edge − spread buffer (lecture: "below the retracement low, which should hold").
+   Stop ⚙: below the MSS FVG's lower edge − spread buffer (lecture: "below the retracement low, which should hold"),
+   and at least ⚙ `min_stop_pips` from the entry (NAS100 15, US30 20, US500 20 points; user 2026-10-27).
 8. **Re-accumulation adds** (max ⚙ 2). After entry, each new execution BOS up with a bullish FVG in its leg gives a buy
-   limit at that FVG's upper edge; when filled, the add risks ⚙ 0.5 R to its own stop (FVG lower edge − buffer) and the
-   stops of all open units move up to that level (aggressive trailing).
+   limit at that FVG's upper edge; when filled, the add risks ⚙ 0.5 R to its own stop (FVG lower edge − buffer, same
+   minimum distance) and the stops of all open units move up to that level (aggressive trailing).
 9. **Target.** All units exit at T. Stop and target in the same candle = stop. Time stop ⚙ 48 h intraday / 10 days swing.
 10. **Costs.** Round-trip spread per unit: NAS100 1.5, US30 2.5, US500 0.6 points.
 
@@ -41,6 +42,11 @@ S1–S4 as the user's main model. Where the lecture is discretionary, the mechan
 - Choice of the reversal array by eye; mitigation/breaker blocks; standard-deviation projections; trailing by feel.
 
 ## Status
+- 2026-10-27: **Minimum stop distance** (user: "increase the stop loss of every setup to 15 to 20 pips"; index pip = 1
+  point). `MMXM_DEFAULTS["min_stop_pips"]` = NAS100 15, US30 20, US500 20 (a number applies to all; 0 = old tight stop).
+  Backtest, costs included: ALL 541 trades −2.6R → +83.3R, max DD −111R → −60R, win 17.6% → 23.5%; intraday −107.5R →
+  −1.5R; swing +104.9R → +84.8R. Uniform 15: +64.2R. Validation half B stays ≈ flat (−9.5R mix, +2.2R uniform 15).
+  Changing the rules re-scores the last 7 days; `RULES_VERSION` makes that backfill arrive as read notifications.
 - 2026-10-24: **Live as specified** (user's choice after the backtest): both timeframes, stop below the MSS FVG, SMT
   required, adds shown as alerts, target = terminus. Runs every scan on NAS100/US30/US500 (`engine/mmxm_live.py`,
   `runner.py`); setups are named "Market maker buy/sell model (intraday|swing)", id `SYM-MMXM-<mode>-<bull|bear>-<epoch>`,

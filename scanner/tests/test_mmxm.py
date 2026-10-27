@@ -9,7 +9,7 @@ from ictscan.engine.core import Bar
 
 T0 = datetime(2026, 10, 19, 8, 0, tzinfo=timezone.utc)
 STEP = timedelta(minutes=5)
-CFG = {**mmxm.MMXM_DEFAULTS, "intraday": {**mmxm.MMXM_DEFAULTS["intraday"], "curve_atr": 0.5}}
+CFG = {**mmxm.MMXM_DEFAULTS, "intraday": {**mmxm.MMXM_DEFAULTS["intraday"], "curve_atr": 0.5}, "min_stop_pips": 0}
 
 
 def candles(spec):
@@ -80,9 +80,27 @@ COST = {"NAS100": 0.1, "US30": 0.1, "US500": 0.1}
 
 
 class MMXMTests(unittest.TestCase):
-    def run_model(self, data):
+    def run_model(self, data, cfg=CFG, pips=None):
         with mock.patch.object(mmxm.Series, "_arrays", fake_arrays):
-            return mmxm.run(data, CFG, modes=("intraday",), buffers=BUF, costs=COST)
+            return mmxm.run(data, cfg, modes=("intraday",), buffers=BUF, costs=COST, pips=pips)
+
+    def test_min_stop_distance_widens_a_tight_stop(self):
+        data = {"NAS100": tfs(textbook()), "US30": tfs(textbook()), "US500": tfs(textbook(floor=100.5))}
+        cfg = {**CFG, "min_stop_pips": {"NAS100": 15, "US30": 20, "US500": 20}}
+        res, _ = self.run_model(data, cfg, pips={"NAS100": 1.0, "US30": 1.0, "US500": 1.0})
+        r = [r for r in res if r["symbol"] == "NAS100" and r["dir"] == "buy"][0]
+        self.assertAlmostEqual(r["stop"], 101.45 - 15)
+        self.assertEqual(r["outcome"], "target")
+        self.assertAlmostEqual(r["R"], (110.1 - 101.45) / 15 - 0.1 / 15)
+        mirrored = {s: {tf: mmxm.mirror(b) for tf, b in d.items()} for s, d in data.items()}
+        res, _ = self.run_model(mirrored, {**cfg, "min_stop_pips": 15})
+        r = [r for r in res if r["symbol"] == "NAS100" and r["dir"] == "sell"][0]
+        self.assertAlmostEqual(r["stop"], -101.45 + 15)
+
+    def test_stop_for_keeps_a_wider_structural_stop(self):
+        self.assertEqual(mmxm.stop_for(100.0, 70.0, 15.0), 70.0)
+        self.assertEqual(mmxm.stop_for(100.0, 98.0, 15.0), 85.0)
+        self.assertEqual(mmxm.stop_for(100.0, 98.0, 0.0), 98.0)
 
     def test_textbook_buy_model_with_smt(self):
         data = {"NAS100": tfs(textbook()), "US30": tfs(textbook()), "US500": tfs(textbook(floor=100.5))}

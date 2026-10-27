@@ -87,10 +87,14 @@ class Scanner:
                 errors.append(f"{sym}: {e}")
         if len(index_bars) == len(mmxm.INDICES):  # MMXM needs all three indices for SMT
             try:
-                # The first MMXM scan backfills the last 7 days; mark that history as read so it does not pop up.
-                quiet = quiet_before if self.store.get_meta("mmxm_initialized", False) else server_now.isoformat()
+                # The first MMXM scan backfills the last 7 days, and a rules change re-scores them; mark that history as
+                # read so it does not pop up.
+                fresh = self.store.get_meta("mmxm_initialized", False) and \
+                    self.store.get_meta("mmxm_rules") == mmxm.RULES_VERSION
+                quiet = quiet_before if fresh else server_now.isoformat()
                 new_notes += self.store.save_setups(live_setups(index_bars, server_now), quiet, offline_since)
                 self.store.set_meta("mmxm_initialized", True)
+                self.store.set_meta("mmxm_rules", mmxm.RULES_VERSION)
             except Exception as e:
                 log.exception("MMXM analysis failed")
                 errors.append(f"MMXM: {e}")
