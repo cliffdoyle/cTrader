@@ -5,7 +5,8 @@
 // never trades and only touches its own objects (names start with "ICTS").
 //
 // Install: double-click "ICT Scanner Levels.algo" (or Automate → Indicators → New, paste this file, Build), then add it
-// once to a chart and paste the feed key into "Feed key". Works with any cTrader broker (prices are aligned).
+// to a chart. The feed key is built in when the indicator is compiled on a PC that has %LOCALAPPDATA%\ictscan\feed-key.txt
+// (see the .csproj); otherwise paste it into "Feed key". Works with any cTrader broker (prices are aligned).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -20,12 +21,12 @@ namespace cAlgo.Indicators
     public enum PanelCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 
     [Indicator(IsOverlay = true, TimeZone = TimeZones.UTC, AccessRights = AccessRights.None, AutoRescale = false)]
-    public class ICTScannerLevels : Indicator
+    public partial class ICTScannerLevels : Indicator
     {
         [Parameter("Scanner URL", DefaultValue = "https://scanner.zuristay.com", Group = "Connection")]
         public string BaseUrl { get; set; }
 
-        [Parameter("Feed key", DefaultValue = "", Group = "Connection")]
+        [Parameter("Feed key (blank = built-in)", DefaultValue = "", Group = "Connection")]
         public string FeedKey { get; set; }
 
         [Parameter("Scanner symbol (blank = this chart)", DefaultValue = "", Group = "Connection")]
@@ -142,7 +143,8 @@ namespace cAlgo.Indicators
         {
             if (_busy)
                 return;
-            if (string.IsNullOrWhiteSpace(FeedKey))
+            var key = string.IsNullOrWhiteSpace(FeedKey) ? BuiltInFeedKey : FeedKey.Trim();
+            if (string.IsNullOrWhiteSpace(key))
             {
                 ShowStatus("ICT Scanner ✕ paste the feed key (indicator settings → Feed key)", Color.IndianRed);
                 return;
@@ -155,7 +157,7 @@ namespace cAlgo.Indicators
             }
             var url = string.Format("{0}/api/feed/{1}?groups={2}&kinds={3}&sess={4}&token={5}", (BaseUrl ?? "").TrimEnd('/'),
                 Uri.EscapeDataString(FeedSymbol()), groups, Uri.EscapeDataString(Kinds ?? ""),
-                Sessions == SessionStyle.Continuous ? "full" : "kz", Uri.EscapeDataString(FeedKey ?? ""));
+                Sessions == SessionStyle.Continuous ? "full" : "kz", Uri.EscapeDataString(key));
             _busy = true;
             Http.GetAsync(url, response => BeginInvokeOnMainThread(() =>
             {

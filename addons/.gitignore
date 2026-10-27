@@ -1,0 +1,4 @@
+# build output (obj\FeedKey.g.cs holds the embedded feed key)
+bin/
+obj/
+FeedKey.g.cs

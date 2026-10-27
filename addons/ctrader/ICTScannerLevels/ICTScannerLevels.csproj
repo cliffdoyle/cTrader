@@ -8,4 +8,23 @@
   <ItemGroup>
     <PackageReference Include="cTrader.Automate" Version="*" />
   </ItemGroup>
+  <!-- Built-in feed key: read from %LOCALAPPDATA%\ictscan\feed-key.txt at build time into obj\ (never in the source or git).
+       Build with -p:EmbedFeedKey=false for a keyless copy to share or commit. -->
+  <PropertyGroup>
+    <EmbedFeedKey Condition="'$(EmbedFeedKey)' == ''">true</EmbedFeedKey>
+    <FeedKeyFile>$(LOCALAPPDATA)\ictscan\feed-key.txt</FeedKeyFile>
+  </PropertyGroup>
+  <Target Name="WriteFeedKey" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <FeedKeySource>$(IntermediateOutputPath)FeedKey.g.cs</FeedKeySource>
+      <_FeedKey></_FeedKey>
+      <_FeedKey Condition="'$(EmbedFeedKey)' == 'true' And Exists('$(FeedKeyFile)')">$([System.IO.File]::ReadAllText('$(FeedKeyFile)').Trim().Replace('\', '').Replace('"', ''))</_FeedKey>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(FeedKeySource)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="namespace cAlgo.Indicators { public partial class ICTScannerLevels { private const string BuiltInFeedKey = &quot;$(_FeedKey)&quot;%3B } }" />
+    <ItemGroup>
+      <Compile Include="$(FeedKeySource)" />
+      <FileWrites Include="$(FeedKeySource)" />
+    </ItemGroup>
+  </Target>
 </Project>

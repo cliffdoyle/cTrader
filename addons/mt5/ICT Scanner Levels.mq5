@@ -13,13 +13,13 @@
 //| WebRequest for listed URL" and add https://scanner.zuristay.com  |
 //+------------------------------------------------------------------+
 #property copyright "ICT Scanner"
-#property version   "1.30"
+#property version   "1.40"
 #property description "Draws the ICT scanner's 90-min boxes, PXH/PXL and SMT. Never trades."
 
 enum SessionTimes { KillZones = 0, Continuous = 1 };
 
 input string InpUrl        = "https://scanner.zuristay.com"; // Scanner URL
-input string InpKey        = "";                            // Feed key
+input string InpKey        = "";                            // Feed key (blank = Common\Files\ictscan-feed-key.txt)
 input string InpSymbol     = "";                            // Scanner symbol (blank = this chart)
 input int    InpRefresh    = 60;                            // Refresh every (seconds)
 input bool   InpSessions   = true;                          // Asia + London boxes
@@ -110,9 +110,29 @@ string UrlEncode(const string s)
    return out;
   }
 
+// The feed key from the input, or else from the shared MetaTrader file Common\Files\ictscan-feed-key.txt
+// (%APPDATA%\MetaQuotes\Terminal\Common\Files), so it never has to be pasted on each chart.
+string FeedKey()
+  {
+   string key = InpKey;
+   StringTrimLeft(key);
+   StringTrimRight(key);
+   if(key != "")
+      return key;
+   int h = FileOpen("ictscan-feed-key.txt", FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ);
+   if(h == INVALID_HANDLE)
+      return "";
+   key = FileReadString(h);
+   FileClose(h);
+   StringTrimLeft(key);
+   StringTrimRight(key);
+   return key;
+  }
+
 void Fetch()
   {
-   if(InpKey == "")
+   string key = FeedKey();
+   if(key == "")
      {
       Status("ICT Scanner X paste the feed key (Inputs > Feed key)", clrIndianRed);
       return;
@@ -129,7 +149,7 @@ void Fetch()
    while(StringLen(base) > 0 && StringGetCharacter(base, StringLen(base) - 1) == '/')
       base = StringSubstr(base, 0, StringLen(base) - 1);
    string url = base + "/api/feed/" + UrlEncode(sym) + "?groups=" + groups + "&kinds=" + UrlEncode(InpKinds)
-                + "&sess=" + (InpSessStyle == Continuous ? "full" : "kz") + "&token=" + UrlEncode(InpKey);
+                + "&sess=" + (InpSessStyle == Continuous ? "full" : "kz") + "&token=" + UrlEncode(key);
    char post[], result[];
    string headers;
    ResetLastError();
