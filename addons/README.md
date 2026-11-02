@@ -52,6 +52,7 @@ MT5 allows web requests only in Expert Advisors, so this is an EA — it contain
 | Session times | KillZones | KillZones (gap 00:00–02:00) or Continuous (Asia until 02:00) |
 | Cycles | week,day,90m | which PXH/PXL cycles (month,week,day,90m) |
 | SMT card position | TopLeft | corner for the SMT card (cTrader) |
+| SMT compare | AllThree | which indices the SMT compares: all three, or one pair — **Nasdaq_SP500** (NAS100 vs US500, no Dow), Nasdaq_Dow, SP500_Dow. A chart whose index is not in the pair shows "not in this comparison" |
 | Align prices to this broker | on | shifts levels by the difference between your broker's and Pepperstone's price on the last 5-min bar (0 on Pepperstone) |
 
 ## Build

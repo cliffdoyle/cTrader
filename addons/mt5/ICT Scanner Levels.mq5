@@ -13,22 +13,35 @@
 //| WebRequest for listed URL" and add https://scanner.zuristay.com  |
 //+------------------------------------------------------------------+
 #property copyright "ICT Scanner"
-#property version   "1.40"
+#property version   "1.60"
 #property description "Draws the ICT scanner's 90-min boxes, PXH/PXL and SMT. Never trades."
 
 enum SessionTimes { KillZones = 0, Continuous = 1 };
+enum SmtCompare { AllThree = 0, Nasdaq_SP500 = 1, Nasdaq_Dow = 2, SP500_Dow = 3 };
 
+input group "Connection"
 input string InpUrl        = "https://scanner.zuristay.com"; // Scanner URL
 input string InpKey        = "";                            // Feed key (blank = Common\Files\ictscan-feed-key.txt)
 input string InpSymbol     = "";                            // Scanner symbol (blank = this chart)
 input int    InpRefresh    = 60;                            // Refresh every (seconds)
-input bool   InpSessions   = true;                          // Asia + London boxes
+input group "Levels"
+input bool   InpMonth      = false;                         // Previous month (M PXH / PXL)
+input bool   InpWeek       = true;                          // Previous week (W PXH / PXL)
+input bool   InpDay        = true;                          // Previous day (D PXH / PXL)
+input bool   In90mLevels   = true;                          // Previous 90-min cycle
+input bool   InpLevels     = false;                         // Session levels (PDH, PWH, Asia H...)
+input group "Sessions"
+input bool   InpAsia       = true;                          // Asia box
+input bool   InpLondon     = true;                          // London box
+input bool   InpNewYork    = false;                         // New York box (09:30-11:30)
 input SessionTimes InpSessStyle = KillZones;                // Session times (kill zones / continuous)
-input bool   InpBoxes      = true;                          // 90-minute boxes
-input bool   InpCycles     = true;                          // PXH / PXL levels
-input string InpKinds      = "week,day,90m";                // Cycles (month,week,day,90m)
-input bool   InpLevels     = false;                         // Session levels (Asia, London, PDH...)
-input bool   InpSmt        = true;                          // SMT divergence
+input int    InpDays       = 3;                             // Days of sessions (1-5)
+input bool   InpBoxes      = true;                          // 90-minute boxes (NY day)
+input group "SMT"
+input bool   InpSmt        = true;                          // SMT card
+input SmtCompare InpSmtPair = AllThree;                     // SMT compare (all three or one pair)
+input group "Look"
+input bool   InpFit        = true;                          // Fit to timeframe
 input int    InpFontSize   = 9;                             // Label size
 input bool   InpAutoAlign  = true;                          // Align prices to this broker
 
@@ -39,12 +52,29 @@ string g_status = "ICT Scanner - connecting...";
 string g_row_names[];
 double g_row_base[];
 int    g_row_dir[];
+// Feed per timeframe class (index = tier 0..5). An EA's globals survive a timeframe change, so switching timeframe draws
+// straight from here; the other classes are downloaded in the background after the first refresh.
+string   g_cache[6];
+datetime g_cache_t[6];
+string   g_cache_key = "";
+int      g_tier = 1;
+bool     g_first_tick = true;
 
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   EventSetTimer(MathMax(15, InpRefresh));
-   Fetch();
+   g_tier = Tier();
+   string ck = CacheKey();
+   if(ck != g_cache_key)
+     {
+      for(int i = 0; i < 6; i++) { g_cache[i] = ""; g_cache_t[i] = 0; }
+      g_cache_key = ck;
+     }
+   g_last_body = "";
+   if(g_cache[g_tier] != "")
+      Render(g_cache[g_tier]);
+   g_first_tick = true;
+   EventSetTimer(1);   // first refresh right after the chart is drawn, then every InpRefresh seconds
    return(INIT_SUCCEEDED);
   }
 
@@ -52,12 +82,26 @@ void OnDeinit(const int reason)
   {
    EventKillTimer();
    ObjectsDeleteAll(0, PREFIX);
+   g_last_body = "";
+   ArrayResize(g_row_names, 0);
+   ArrayResize(g_row_base, 0);
+   ArrayResize(g_row_dir, 0);
    ChartRedraw();
   }
 
 void OnTick() {}
 
-void OnTimer() { Fetch(); }
+void OnTimer()
+  {
+   if(g_first_tick)
+     {
+      g_first_tick = false;
+      EventKillTimer();
+      EventSetTimer(MathMax(15, InpRefresh));
+     }
+   Fetch();
+   Prefetch();
+  }
 
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
   {
@@ -85,13 +129,65 @@ void PlaceRowLabels()
 string Groups()
   {
    string g = "";
-   if(InpSessions) g += "sessions,";
+   if(SessionsCsv() != "") g += "sessions,";
    if(InpBoxes)  g += "boxes,";
-   if(InpCycles) g += "cycles,";
+   if(KindsCsv() != "") g += "cycles,";
    if(InpLevels) g += "levels,";
    if(InpSmt)    g += "smt,";
    if(StringLen(g) > 0) g = StringSubstr(g, 0, StringLen(g) - 1);
    return g;
+  }
+
+string Csv(string s)
+  {
+   if(StringLen(s) > 0) s = StringSubstr(s, 0, StringLen(s) - 1);
+   return s;
+  }
+
+string KindsCsv()
+  {
+   string k = "";
+   if(InpMonth)    k += "month,";
+   if(InpWeek)     k += "week,";
+   if(InpDay)      k += "day,";
+   if(In90mLevels) k += "90m,";
+   return Csv(k);
+  }
+
+string SessionsCsv()
+  {
+   string s = "";
+   if(InpAsia)    s += "asia,";
+   if(InpLondon)  s += "london,";
+   if(InpNewYork) s += "ny,";
+   return Csv(s);
+  }
+
+// Timeframe class the scanner fits the drawing to: 1 <= M5, 2 <= M30, 3 = H1, 4 <= H4, 5 >= D1 (0 = draw everything).
+int Tier()
+  {
+   if(!InpFit)
+      return 0;
+   int s = PeriodSeconds();
+   if(s <= 300)   return 1;
+   if(s <= 1800)  return 2;
+   if(s <= 3600)  return 3;
+   if(s <= 14400) return 4;
+   return 5;
+  }
+
+string CacheKey()
+  {
+   return (InpSymbol == "" ? _Symbol : InpSymbol) + "|" + Groups() + "|" + KindsCsv() + "|" + SessionsCsv() + "|"
+          + IntegerToString(InpDays) + "|" + IntegerToString((int)InpSessStyle) + "|" + SmtPair();
+  }
+
+string SmtPair()
+  {
+   if(InpSmtPair == Nasdaq_SP500) return "nq-es";
+   if(InpSmtPair == Nasdaq_Dow)   return "nq-ym";
+   if(InpSmtPair == SP500_Dow)    return "es-ym";
+   return "all";
   }
 
 string UrlEncode(const string s)
@@ -131,25 +227,47 @@ string FeedKey()
 
 void Fetch()
   {
-   string key = FeedKey();
-   if(key == "")
-     {
-      Status("ICT Scanner X paste the feed key (Inputs > Feed key)", clrIndianRed);
-      return;
-     }
-   string groups = Groups();
-   if(groups == "")
+   if(Groups() == "")
      {
       ObjectsDeleteAll(0, PREFIX);
       Status("ICT Scanner - nothing selected", clrGray);
       return;
      }
+   string body;
+   if(Download(g_tier, body, true))
+      Render(body);
+  }
+
+// Fill the other timeframe classes (older than 10 minutes or missing) so a timeframe switch draws at once.
+void Prefetch()
+  {
+   if(!InpFit || Groups() == "")
+      return;
+   for(int t = 1; t <= 5; t++)
+     {
+      if(t == g_tier || (g_cache[t] != "" && TimeLocal() - g_cache_t[t] < 600))
+         continue;
+      string body;
+      if(!Download(t, body, false))
+         return;
+     }
+  }
+
+bool Download(int tier, string &body, bool report)
+  {
+   string key = FeedKey();
+   if(key == "")
+     {
+      if(report) Status("ICT Scanner X paste the feed key (Inputs > Feed key)", clrIndianRed);
+      return false;
+     }
    string sym = InpSymbol == "" ? _Symbol : InpSymbol;
    string base = InpUrl;
    while(StringLen(base) > 0 && StringGetCharacter(base, StringLen(base) - 1) == '/')
       base = StringSubstr(base, 0, StringLen(base) - 1);
-   string url = base + "/api/feed/" + UrlEncode(sym) + "?groups=" + groups + "&kinds=" + UrlEncode(InpKinds)
-                + "&sess=" + (InpSessStyle == Continuous ? "full" : "kz") + "&token=" + UrlEncode(key);
+   string url = base + "/api/feed/" + UrlEncode(sym) + "?groups=" + Groups() + "&kinds=" + KindsCsv() + "&sn=" + SessionsCsv()
+                + "&days=" + IntegerToString(MathMax(1, MathMin(5, InpDays))) + "&sess=" + (InpSessStyle == Continuous ? "full" : "kz")
+                + "&smt=" + SmtPair() + "&tier=" + IntegerToString(tier) + "&token=" + UrlEncode(key);
    char post[], result[];
    string headers;
    ResetLastError();
@@ -157,19 +275,24 @@ void Fetch()
    if(code == -1)
      {
       int err = GetLastError();
-      if(err == 4014)
-         Status("ICT Scanner X add " + base + " in Tools > Options > Expert Advisors > Allow WebRequest", clrIndianRed);
-      else
-         Status("ICT Scanner X scanner not reachable (error " + IntegerToString(err) + ")", clrIndianRed);
-      return;
+      if(report)
+        {
+         if(err == 4014)
+            Status("ICT Scanner X add " + base + " in Tools > Options > Expert Advisors > Allow WebRequest", clrIndianRed);
+         else
+            Status("ICT Scanner X scanner not reachable (error " + IntegerToString(err) + ")", clrIndianRed);
+        }
+      return false;
      }
-   string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
    if(code != 200)
      {
-      Status("ICT Scanner X " + FirstError(body, code), clrIndianRed);
-      return;
+      if(report) Status("ICT Scanner X " + FirstError(body, code), clrIndianRed);
+      return false;
      }
-   Render(body);
+   g_cache[tier] = body;
+   g_cache_t[tier] = TimeLocal();
+   return true;
   }
 
 string FirstError(const string body, int code)
@@ -331,7 +454,7 @@ bool Draw(const string name, string &f[], int k, double offset, long shift)
          return false;
       ObjectMove(0, name, 0, t1, p1);
       ObjectSetString(0, name, OBJPROP_TEXT, text);
-      ObjectSetString(0, name, OBJPROP_FONT, "Arial");
+      ObjectSetString(0, name, OBJPROP_FONT, (flags & 4) != 0 ? "Arial Bold" : "Arial");
       ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpFontSize);
       ObjectSetInteger(0, name, OBJPROP_ANCHOR, f[10] == "below" ? ANCHOR_LEFT_UPPER : f[10] == "middle" ? ANCHOR_LEFT : ANCHOR_LEFT_LOWER);
       ObjectSetInteger(0, name, OBJPROP_COLOR, col);

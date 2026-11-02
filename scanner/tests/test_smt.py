@@ -73,6 +73,21 @@ class CycleSmtTests(unittest.TestCase):
         v = summ["verdict"]
         self.assertEqual((v["bias"]["name"], v["direction"], v["trade_on"]), ("90-min", "sell", ["US30"]))
 
+    def test_pair_without_the_dow(self):
+        """NAS100 vs US500 only: the same move where both took the high is no SMT; NAS100 alone taking it is."""
+        t0 = datetime(2026, 10, 26, 7, 0, tzinfo=NY).astimezone(timezone.utc)
+        first = [(0, 100), (9, 110), (18, 100)]
+        took, held = first + [(27, 112), (30, 108)], first + [(27, 109), (30, 106)]
+        empty = {"m15": [], "h1": [], "h4": []}
+        both = {"NAS100": {"m5": path_bars(took, t0), **empty}, "US500": {"m5": path_bars(took, t0), **empty}}
+        now = both["NAS100"]["m5"][-1].end
+        summ = smt_summary(both, now)
+        self.assertEqual(summ["symbols"], ["NAS100", "US500"])
+        self.assertIsNone(summ["verdict"]["bias"])
+        split = {"NAS100": {"m5": path_bars(took, t0), **empty}, "US500": {"m5": path_bars(held, t0), **empty}}
+        v = smt_summary(split, now)["verdict"]
+        self.assertEqual((v["direction"], v["trade_on"]), ("sell", ["US500"]))
+
 
 class VerdictTests(unittest.TestCase):
     def x(self, tf, side, t, w):
@@ -94,8 +109,9 @@ class VerdictTests(unittest.TestCase):
 def asgi(app, method, path, headers=None, body=b""):
     """Minimal ASGI request (httpx is not installed)."""
     out = {"status": None, "headers": {}, "body": b""}
+    path, _, query = path.partition("?")
     scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method, "scheme": "http",
-             "path": path, "raw_path": path.encode(), "query_string": b"", "root_path": "", "server": ("127.0.0.1", 8765),
+             "path": path, "raw_path": path.encode(), "query_string": query.encode(), "root_path": "", "server": ("127.0.0.1", 8765),
              "client": ("127.0.0.1", 5000), "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]}
     sent = [False]
 

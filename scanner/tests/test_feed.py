@@ -30,6 +30,40 @@ class FeedFormatTests(unittest.TestCase):
 
 
 class FeedEndpointTests(unittest.TestCase):
+    def test_fit_to_timeframe(self):
+        from ictscan.feed import fit
+        g = ["sessions", "boxes", "cycles", "levels", "smt"]
+        all_kinds = ["month", "week", "day", "90m"]
+        self.assertEqual(fit(0, g, None), (g, ["week", "day", "90m"]))
+        self.assertEqual(fit(1, g, all_kinds), (g, all_kinds))
+        self.assertEqual(fit(3, g, all_kinds), (["sessions", "cycles", "levels", "smt"], ["month", "week", "day"]))
+        self.assertEqual(fit(4, g, all_kinds), (["cycles", "levels", "smt"], ["month", "week", "day"]))
+        self.assertEqual(fit(5, g, all_kinds), (["cycles", "levels", "smt"], ["month", "week"]))
+
+    def test_session_boxes_for_several_days(self):
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+        from zoneinfo import ZoneInfo
+        from ictscan.drawing import plan_sessions
+        from ictscan.engine.core import Bar
+        t0 = datetime(2026, 10, 28, 20, 0, tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
+        bars = [Bar(t0 + i * timedelta(minutes=5), t0 + (i + 1) * timedelta(minutes=5), 100 + i % 7, 101 + i % 7, 99 + i % 7,
+                    100 + i % 5) for i in range(12 * 24 * 5)]
+        now = datetime(2026, 11, 2, 12, 0, tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
+        ctx = SimpleNamespace(bars={"m5": [b for b in bars if b.end <= now]}, now=now, atr={"h1": [10.0]}, fmt=lambda v: round(v, 1))
+        objs, _ = plan_sessions(ctx, "kz", ("Asia", "London", "NY AM"), 3)
+        texts = [o for o, _, _ in objs if o["object_type"] == "text"]
+        self.assertEqual(sum(t["text"].startswith("ASIA") for t in texts), 3)    # Mon, Fri, Thu (weekend skipped)
+        self.assertEqual(sum(t["text"].startswith("NEW YORK") for t in texts), 3)
+        latest = [t for t in texts if t["color"].startswith("#4F")]               # full-colour labels = latest day only
+        self.assertEqual(len(latest), 2)
+        self.assertTrue(all(t.get("bold") for t in texts if t["anchor"] == "above"))
+        self.assertEqual({t["row"] for t in texts if "LONDON" in t["text"]}, {1})
+        ticks = [o for o, w, _ in objs if o["object_type"] == "trend_line" and w == 3]
+        self.assertEqual(len(ticks), 6)                                            # open/close ticks: latest day only
+        compact, _ = plan_sessions(ctx, "kz", ("Asia", "London", "NY AM"), 3, compact=True)
+        self.assertFalse([o for o, w, _ in compact if o["object_type"] == "trend_line" and w == 3])
+
     def test_key_required_when_dashboard_has_password(self):
         from ictscan.store import Store
         from ictscan.web import app as appmod
@@ -40,6 +74,12 @@ class FeedEndpointTests(unittest.TestCase):
             r = asgi(app, "GET", "/api/feed/USTEC", {"X-Feed-Token": "k3y"})
             self.assertEqual((r["status"], r["body"]), (200, b"#ICTSCAN|1|NAS100\n"))
             self.assertEqual(bf.call_args.args[1], "NAS100")
+            self.assertEqual(bf.call_args.args[5], "all")
+            asgi(app, "GET", "/api/feed/USTEC?smt=nq-es", {"X-Feed-Token": "k3y"})
+            self.assertEqual(bf.call_args.args[5], "nq-es")
+            self.assertEqual(bf.call_args.args[6:], (0, ("Asia", "London"), 1))   # first add-on versions: unchanged
+            asgi(app, "GET", "/api/feed/USTEC?tier=9&sn=asia,ny,bogus&days=0", {"X-Feed-Token": "k3y"})
+            self.assertEqual(bf.call_args.args[6:], (5, ("Asia", "NY AM"), 1))
             self.assertEqual(asgi(app, "GET", "/api/feed/GER40", {"X-Feed-Token": "k3y"})["status"], 404)
             self.assertEqual(asgi(app, "GET", "/api/overview", {"X-Feed-Token": "k3y"})["status"], 401)
 

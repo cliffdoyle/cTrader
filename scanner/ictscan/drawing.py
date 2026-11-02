@@ -147,7 +147,8 @@ def plan_for(what, ctx, client, store, kinds=None, untouched_only=False, sess="k
 
 SMT_COL = {"bearish": "#FF5C6C", "bullish": "#2BD4A4"}
 PANEL_TEXT, PANEL_DIM = "#E3E9F1", "#8A97A8"
-SESSION_COLORS = {"Asia": "4F8DFF", "London": "FF8A3D"}
+SESSION_COLORS = {"Asia": "4F8DFF", "London": "FF8A3D", "NY AM": "2EC27E"}
+SESSION_NAMES = {"Asia": "ASIA", "London": "LONDON", "NY AM": "NEW YORK"}
 
 
 def _per_labels(summ, x):
@@ -171,14 +172,16 @@ def plan_smt(ctx, summ):
     def panel(text, color):
         objs.append(({"object_type": "panel", "color": color, "text": text}, None, None))
 
+    syms = summ.get("symbols") or []
+    pair = f"  ·  {' vs '.join(syms)}" if len(syms) == 2 else ""
     if not b:
-        panel("SMT · no divergence on the three indices", PANEL_DIM)
+        panel(f"SMT · no divergence between {' / '.join(syms) or 'the indices'}", PANEL_DIM)
         lines.append("  → " + v.get("summary", "no SMT"))
         return objs, lines
     bear = b["side"] == "bearish"
     col = SMT_COL[b["side"]]
     word = "highs" if bear else "lows"
-    panel(f"{'▼ BEARISH' if bear else '▲ BULLISH'} SMT  ·  divergence at the {word}", col)
+    panel(f"{'▼ BEARISH' if bear else '▲ BULLISH'} SMT  ·  divergence at the {word}{pair}", col)
     took = "took PXH" if bear else "took PXL"
     head = f"{b['name']} {'cycle' if b['source'] == 'cycle' else 'swing'}"
     panel(f"{head}:  {_per_labels(summ, b)}" + (f"   ({took})" if b["source"] == "cycle" else ""), PANEL_TEXT)
@@ -209,47 +212,62 @@ def plan_smt(ctx, summ):
     return objs, lines
 
 
-def plan_sessions(ctx, style="kz"):
-    """Asia and London of the current trading day as light shaded boxes with their high/low printed, and a dotted line
-    from each high/low to the right until price takes it ("swept HH:MM").
+def plan_sessions(ctx, style="kz", names=("Asia", "London"), days=1, compact=False):
+    """Session boxes (Asia, London, optionally New York AM) of the last `days` trading days as light shaded boxes with
+    their high/low printed. The latest day also gets open/close ticks and a dotted line from each high/low to the right
+    until price takes it ("swept HH:MM"); older days stay quiet (box + high/low only) so several days read cleanly.
     style "kz" = ICT kill zones (Asia 20:00–00:00, London 02:00–05:00 NY; 00:00–02:00 is left empty on purpose);
-    style "full" = continuous (Asia 20:00–02:00 runs straight into London 02:00–05:00)."""
+    style "full" = continuous (Asia 20:00–02:00 runs straight into London 02:00–05:00).
+    compact = short labels without ticks for higher timeframes (H1), where a session is only a few candles wide."""
     from .engine.session import NY as _NY, WINDOWS, _range, _taken, ny_time, trading_day
+    from .draw_cycles import open_close_marks
     m5, now = ctx.bars["m5"], ctx.now
-    d = trading_day(now)
-    prev = d - timedelta(days=3 if d.weekday() == 0 else 1)
     pad = ctx.atr["h1"][-1] * 0.03
     objs, lines = [], []
-    windows = [(n, s, ((0, 2, 0) if style == "full" and n == "Asia" else e)) for n, s, e, _ in WINDOWS]
-    for name, (o0, h0, m0), (o1, h1, m1) in windows:
-        rgb = SESSION_COLORS.get(name)
-        if not rgb:
-            continue
-        day = d if now > ny_time(d, o0, h0, m0) else prev  # before Asia opens show the last finished one
-        t0, t1 = ny_time(day, o0, h0, m0), ny_time(day, o1, h1, m1)
-        r = _range(m5, t0, min(t1, now))
-        if not r:
-            continue
-        forming = now < t1
-        box = {"object_type": "rectangle", "price1": r["high"], "time1": iso(t0), "price2": r["low"], "time2": iso(t1)}
-        objs.append(({**box, "color": f"#1F{rgb}", "fill": True}, None, None))
-        objs.append(({**box, "color": f"#99{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
-        from .draw_cycles import open_close_marks
-        marks, oc = open_close_marks(ctx, t0, t1, r["open"], r["close"], rgb, forming)
-        objs += marks
-        notes = {}
-        for side, price in (("high", r["high"]), ("low", r["low"])):
-            tk = None if forming else _taken(m5, side, price, t1, now)
-            notes[side] = f"  · swept {tk.astimezone(_NY):%H:%M}" if tk else ""
-            if not forming:
-                objs.append(({"object_type": "trend_line", "price1": price, "time1": iso(t1), "price2": price,
-                              "time2": iso(tk or now), "color": f"#B3{rgb}", "extend": False}, 1, "dots"))
-        objs.append(({"object_type": "text", "price1": ctx.fmt(r["high"] + pad), "time1": iso(t0), "color": f"#{rgb}",
-                      "anchor": "above", "text": f"{name.upper()}  H {ctx.fmt(r['high'])}{notes['high']}"}, None, None))
-        objs.append(({"object_type": "text", "price1": ctx.fmt(r["low"] - pad), "time1": iso(t0), "color": f"#{rgb}",
-                      "anchor": "below", "text": f"L {ctx.fmt(r['low'])}{notes['low']}   ·   {oc}"}, None, None))
-        lines.append(f"  {name:7} {t0.astimezone(_NY):%a %H:%M}–{t1.astimezone(_NY):%H:%M} NY  H {ctx.fmt(r['high'])}{notes['high']}"
-                     f"  L {ctx.fmt(r['low'])}{notes['low']}  {oc}" + ("  (forming)" if forming else ""))
+    windows = [(i, n, s, ((0, 2, 0) if style == "full" and n == "Asia" else e))
+               for i, (n, s, e, _) in enumerate(WINDOWS) if n in names and n in SESSION_COLORS]
+    d, shown = trading_day(now), 0
+    for _ in range(max(1, days) + 7):  # walk back over weekends and holidays
+        if shown >= days:
+            break
+        latest, any_drawn = shown == 0, False
+        for i, name, (o0, h0, m0), (o1, h1, m1) in windows:
+            t0, t1 = ny_time(d, o0, h0, m0), ny_time(d, o1, h1, m1)
+            if t0 >= now:
+                continue
+            r = _range(m5, t0, min(t1, now))
+            if not r:
+                continue
+            any_drawn = True
+            rgb, label = SESSION_COLORS[name], SESSION_NAMES[name]
+            forming = now < t1
+            box = {"object_type": "rectangle", "price1": r["high"], "time1": iso(t0), "price2": r["low"], "time2": iso(t1)}
+            objs.append(({**box, "color": f"#{'1F' if latest else '17'}{rgb}", "fill": True}, None, None))
+            objs.append(({**box, "color": f"#{'99' if latest else '66'}{rgb}", "fill": False}, 1, "lines" if forming else "solid"))
+            notes, oc = {"high": "", "low": ""}, ""
+            if latest:
+                if not compact:
+                    marks, oc = open_close_marks(ctx, t0, t1, r["open"], r["close"], rgb, forming)
+                    objs += marks
+                for side, price in (("high", r["high"]), ("low", r["low"])):
+                    tk = None if forming else _taken(m5, side, price, t1, now)
+                    notes[side] = f"  · swept {tk.astimezone(_NY):%H:%M}" if tk else ""
+                    if not forming:
+                        objs.append(({"object_type": "trend_line", "price1": price, "time1": iso(t1), "price2": price,
+                                      "time2": iso(tk or now), "color": f"#B3{rgb}", "extend": False}, 1, "dots"))
+            row = i % 2  # neighbouring sessions put their labels on different text rows
+            dim = "" if latest else "B3"
+            objs.append(({"object_type": "text", "price1": ctx.fmt(r["high"] + pad), "time1": iso(t0), "color": f"#{dim}{rgb}",
+                          "anchor": "above", "row": row, "bold": True,
+                          "text": f"{label}  H {ctx.fmt(r['high'])}{notes['high']}"}, None, None))
+            low_text = f"L {ctx.fmt(r['low'])}{notes['low']}" + (f"   ·   {oc}" if oc else "")
+            objs.append(({"object_type": "text", "price1": ctx.fmt(r["low"] - pad), "time1": iso(t0), "color": f"#{dim}{rgb}",
+                          "anchor": "below", "row": row, "text": low_text}, None, None))
+            lines.append(f"  {name:7} {t0.astimezone(_NY):%a %H:%M}–{t1.astimezone(_NY):%H:%M} NY  H {ctx.fmt(r['high'])}"
+                         f"{notes['high']}  L {ctx.fmt(r['low'])}{notes['low']}  {oc}" + ("  (forming)" if forming else ""))
+        if any_drawn:
+            shown += 1
+        d -= timedelta(days=3 if d.weekday() == 0 else 1)
     return objs, lines
 
 

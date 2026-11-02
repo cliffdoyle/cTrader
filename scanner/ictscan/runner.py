@@ -13,7 +13,7 @@ from .engine.context import Context
 from .engine.core import make_bars
 from .engine.mmxm_live import live_setups
 from .engine.setups import detect_all
-from .engine.smt import smt_summary
+from .engine.smt import PAIRS as SMT_PAIRS, meta_key as smt_meta_key, smt_summary
 from .engine.topdown import topdown
 from .mcp import MCPUnavailable
 from .source import make_client, offline_hint
@@ -98,11 +98,12 @@ class Scanner:
             except Exception as e:
                 log.exception("MMXM analysis failed")
                 errors.append(f"MMXM: {e}")
-            try:
-                self.store.set_meta("smt", smt_summary(index_bars, server_now))
-            except Exception as e:
-                log.exception("SMT analysis failed")
-                errors.append(f"SMT: {e}")
+            for pair, syms in SMT_PAIRS.items():
+                try:
+                    self.store.set_meta(smt_meta_key(pair), smt_summary({s: index_bars[s] for s in syms}, server_now))
+                except Exception as e:
+                    log.exception("SMT analysis failed (%s)", pair)
+                    errors.append(f"SMT {pair}: {e}")
         self.store.set_meta("initialized", True)
         self.store.set_meta("last_scan", server_now.isoformat())
         dur = round(time.time() - t0, 1)

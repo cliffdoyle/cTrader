@@ -19,8 +19,9 @@ def iso(t):
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def plan_levels(ctx, untouched_only=False):
-    """(objects, lines): objects are (add_chart_object args, thickness, style)."""
+def plan_levels(ctx, untouched_only=False, tags=None):
+    """(objects, lines): objects are (add_chart_object args, thickness, style). `tags` limits the levels drawn, e.g.
+    ("PW", "PD") for higher timeframes (None = all, incl. session highs/lows and the midnight open)."""
     kl = key_levels(ctx.bars["m5"], ctx.bars["d1"], ctx.bars["w1"], ctx.now)
     pad = ctx.atr["h1"][-1] * 0.12
     objs, drawn = [], []
@@ -28,6 +29,8 @@ def plan_levels(ctx, untouched_only=False):
         if not lv["untouched"] and untouched_only:
             continue
         tag = next(k for k in COLORS if lv["name"].startswith(k))
+        if tags is not None and tag not in tags:
+            continue
         color = COLORS[tag]
         label = f"{lv['name']} {ctx.fmt(lv['price'])}"
         if lv["untouched"]:
@@ -41,7 +44,7 @@ def plan_levels(ctx, untouched_only=False):
                       "time1": iso(lv["formed_t"]), "color": color, "text": label}, None, None))
         drawn.append(lv["name"] + ("" if lv["untouched"] else " (swept)"))
     mo = kl["opens"].get("midnight")
-    if mo is not None:
+    if mo is not None and (tags is None or "open" in tags):
         t0 = ny_time(trading_day(ctx.now), 0, 0, 0)
         objs.append(({"object_type": "trend_line", "price1": mo, "time1": iso(t0), "price2": mo, "time2": iso(ctx.now),
                       "color": COLORS["open"], "extend": True}, 1, "dots"))

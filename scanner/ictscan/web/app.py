@@ -230,14 +230,15 @@ def create_app(store, scanner=None):
                 "active": [brief(s) for s in active], "recent": [brief(s) for s in closed[:30]]}
 
     @app.get("/api/smt")
-    def smt():
-        return store.get_meta("smt") or {}
+    def smt(pair: str = "all"):
+        from ..engine.smt import PAIRS, meta_key
+        return store.get_meta(meta_key(pair if pair in PAIRS else "all")) or {}
 
     @app.get("/api/feed/{sym}")
     def feed(sym: str, request: Request, token: str = "", groups: str = "sessions,boxes,cycles,smt", kinds: str = "",
-             sess: str = "kz"):
+             sess: str = "kz", smt: str = "all", tier: int = 0, sn: str = "asia,london", days: int = 1):
         """Drawing instructions for the chart add-ons (see ictscan/feed.py). Read-only."""
-        from ..feed import GROUPS, build_feed, resolve
+        from ..feed import GROUPS, SESSION_KEYS, build_feed, resolve
         given = token or request.headers.get("x-feed-token", "")
         if not ((FEED_TOKEN and secrets.compare_digest(given.encode(), FEED_TOKEN.encode())) or not DASH_PASSWORD
                 or _authorised(request.headers.get("authorization", ""))):
@@ -247,8 +248,10 @@ def create_app(store, scanner=None):
             return PlainTextResponse(f"#ERR|symbol|{sym} is not a scanner symbol\n", status_code=404)
         gs = [g for g in groups.split(",") if g in GROUPS] or list(GROUPS)
         ks = [k for k in kinds.split(",") if k in ("month", "week", "day", "90m")] or None
+        names = tuple(SESSION_KEYS[s] for s in sn.lower().split(",") if s in SESSION_KEYS)
         try:
-            return PlainTextResponse(build_feed(store, target, gs, ks, "full" if sess == "full" else "kz"),
+            return PlainTextResponse(build_feed(store, target, gs, ks, "full" if sess == "full" else "kz", smt,
+                                                min(max(tier, 0), 5), names, min(max(days, 1), 5)),
                                      headers={"Cache-Control": "no-store"})
         except ValueError as e:
             return PlainTextResponse(f"#ERR|data|{e}\n", status_code=503)

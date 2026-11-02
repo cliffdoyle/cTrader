@@ -21,6 +21,12 @@ from .core import TF_SECONDS, atr_series, find_swings
 from .cycles import KIND_TF, LABEL, NY, build_cycles, cycle_of
 
 INDICES = ("NAS100", "US30", "US500")
+# Which indices an SMT compares: all three, or one pair (e.g. NAS100 vs US500 without the Dow). Stored per pair.
+PAIRS = {"all": INDICES, "nq-es": ("NAS100", "US500"), "nq-ym": ("NAS100", "US30"), "es-ym": ("US500", "US30")}
+
+
+def meta_key(pair="all"):
+    return "smt" if pair == "all" else f"smt:{pair}"
 SWING_TFS = {"m5": 6, "m15": 24, "h1": 72}    # look-back in hours for the later swing point
 NEAR_BARS = 2                                  # time alignment: the other indices' extreme within ±2 bars
 EQUAL_ATR = 0.1                                # closer than 0.1 × ATR = equal high/low (neither side of the divergence)
@@ -263,5 +269,6 @@ def smt_summary(bars_by_sym, now, fmt=lambda v: round(v, 1)):
     headline = ({"side": b["side"], "text": f"{b['name']} SMT: {b['text']}", "trade": b["trade"]} if b else
                 {"side": ranked[0]["side"], "text": f"{ranked[0]['name']} SMT: {ranked[0]['text']}", "trade": ranked[0]["trade"]}
                 if ranked else None)
-    return {"t": now.isoformat(), "symbols": list(INDICES), "cycles": cyc, "swings": swings, "ranked": ranked,
+    return {"t": now.isoformat(), "symbols": [s for s in INDICES if s in bars_by_sym], "cycles": cyc, "swings": swings,
+            "ranked": ranked,
             "verdict": verdict, "headline": headline}
