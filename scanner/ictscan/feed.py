@@ -145,7 +145,11 @@ def build_feed(store, symbol, groups=GROUPS, kinds=None, sess="kz", smt="all", t
                     continue
                 objs, _ = plan_sessions(ctx, sess, sessions, days, compact=tier == 3)
             elif g == "levels":
-                objs, _ = plan_levels(ctx, tags=FIT_LEVEL_TAGS.get(tier))
+                tags = FIT_LEVEL_TAGS.get(tier)
+                if "sessions" in groups:  # a session box already prints its high/low: skip those level lines
+                    from .draw_levels import COLORS as LEVEL_TAGS
+                    tags = tuple(t for t in (tags or LEVEL_TAGS) if t not in sessions)
+                objs, _ = plan_levels(ctx, tags=tags)
             else:
                 _, objs, _ = plan_for(g, ctx, None, store, kinds, sess=sess)
         except Exception as e:  # noqa: BLE001 — one group failing must not blank the others
