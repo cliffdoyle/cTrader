@@ -1,4 +1,4 @@
-# Chart add-ons: ICT Scanner Levels (cTrader + MT5)
+# Chart add-ons: ICT Scanner Levels (cTrader + MT5 + TradingView)
 
 Draw the scanner's levels on your own charts without the cTrader MCP:
 - **Session boxes** (Asia, London and optionally New York 09:30–11:30, for the last 1–5 trading days): light shading with
@@ -44,6 +44,42 @@ MT5 allows web requests only in Expert Advisors, so this is an EA — it contain
 3. Tools → Options → Expert Advisors → tick **Allow WebRequest for listed URL** → add `https://scanner.zuristay.com` → OK.
 4. Drag **ICT Scanner Levels** from the Navigator onto the chart → OK (Feed key blank uses the shared key file).
    (One EA per chart in MT5; use another chart for another EA.)
+
+## TradingView — Pine Script indicator
+Pine Script cannot download data from a server, so the TradingView version does not read the scanner feed: it rebuilds
+the same drawings from TradingView's own candles with the scanner's rules (sessions, 90-minute boxes, PXH/EQ/PXL, key
+levels and the SMT panel). No feed key and no scanner connection are needed; it works on the web, desktop and phone apps.
+1. Open a chart of **PEPPERSTONE:NAS100** (or PEPPERSTONE:US500 / PEPPERSTONE:US30 — the Pepperstone feed gives the same
+   prices as the scanner; other feeds work but differ by a few points).
+2. Pine Editor (bottom panel) → open the menu next to the script name → **Create new → Indicator** → select all → paste the
+   contents of `tradingview/ICT Scanner Levels.pine` → **Save** (name it "ICT Scanner Levels") → **Add to chart**.
+   A free TradingView account is enough (saving needs to be logged in).
+3. Settings (gear on the indicator's name): Sessions, Levels and cycles, SMT and Look groups mirror the cTrader settings;
+   **SMT compare** picks the indices and the three symbol fields choose the feed the SMT compares (default Pepperstone).
+
+Differences from the cTrader / MT5 add-ons:
+- Everything is computed by TradingView, so it keeps working when the scanner is down, but the values come from
+  TradingView's candles (PEPPERSTONE matches; another feed shifts the prices slightly).
+- Session boxes and the session high/low lines use the chart's candles: exact up to M30, on H1 the New York box covers
+  09:00–12:00. Day / week / month levels always come from H1 data, the SMT from 5m / 15m / 1H data of the three indices.
+- The SMT follows `engine/smt.py` (cycle SMT on the 90-min / day / week cycles + swing SMT on 5m / 15m / 1H with the same
+  ±2-bar alignment, 0.1 × ATR equal-high tolerance and watch / confirmed / cancelled status). The "sell the weaker / buy
+  the stronger" line names the index from the 5m/15m trigger when there is one, and adds the higher-timeframe SMT's index
+  in brackets when they differ.
+- **Cycle SMT markers** ("Mark cycle SMT on the chart", on by default): the moment one index trades through the previous
+  90-min / day / week high (low) while another has not, the level is highlighted (dashed, red for highs / green for lows)
+  and a filled label appears — on the candle that took it ("SMT ▼ Day PXH taken · US500 did not") when this chart's index
+  took it, or on this index's own high/low ("SMT ▼ Day PXH not taken · NAS100 took it") when it did not. It is live from
+  the first tick (the forming candle counts, unlike the scanner which waits for closed candles), so it disappears again
+  if the lagging index also takes the level. 90-min markers show up to M30, day up to H4, week everywhere.
+- **Alerts**: right-click the indicator → Add alert → condition "ICT Scanner Levels" → **Any alert() function call**. You
+  get one alert per new SMT (cycle SMTs and 5m / 15m / 1H swing SMTs), with the indices that took / did not take the level.
+- A text "row" is a fixed 0.3 × H1 ATR (Pine cannot read the zoom), so at extreme zoom levels neighbouring labels can touch.
+
+Sharing: the script has no key or scanner address in it, so it can be given to anyone. Either send the `.pine` file (they
+paste it as in step 2), or publish it from the Pine Editor (**Publish script** → **Private**, so it is not listed or
+reviewed) and send the link; they open it and click **Add to favorites**, and later "Update" publications reach them
+automatically.
 
 ## Settings (both)
 | Setting | Default | Meaning |
