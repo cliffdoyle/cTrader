@@ -83,6 +83,31 @@ class FeedEndpointTests(unittest.TestCase):
             self.assertEqual(asgi(app, "GET", "/api/feed/GER40", {"X-Feed-Token": "k3y"})["status"], 404)
             self.assertEqual(asgi(app, "GET", "/api/overview", {"X-Feed-Token": "k3y"})["status"], 401)
 
+    def test_swing_tab_shows_only_swing_setups(self):
+        import json
+        from ictscan.store import Store
+        from ictscan.web import app as appmod
+
+        def rec(sym, mode, stage, r, n):
+            t = f"2026-11-1{n}T09:00:00+00:00"
+            return {"id": f"{sym}-MMXM-{mode}-bear-179400000{n}", "symbol": sym, "setup": "MMXM", "name": f"Market maker sell model ({mode})",
+                    "dir": "bearish", "poi_tf": "h4", "confirm_tf": "m15", "stage": stage, "stage_t": t, "key_t": t, "entry": 2.0,
+                    "stop": 2.5, "tp1": 1.0, "tp1_name": "terminus", "rr": 2.0, "result_r": r, "score": 7, "grade": "A",
+                    "grade_note": "", "poi": {"kind": "H4 OB", "low": 1, "high": 3}, "checklist": [],
+                    "timeline": [{"stage": "limit", "t": t, "ny": "Tue 10 Nov 04:00", "note": "limit"}]}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            st = Store(Path(d) / "t.db")
+            st.save_setups([rec("NAS100", "swing", "target", 20.5, 1), rec("US30", "swing", "stopped", -1.0, 2),
+                            rec("US500", "swing", "limit", None, 3), rec("US30", "intraday", "stopped", -1.1, 4)])
+            r = asgi(appmod.create_app(st), "GET", "/api/swing")
+            self.assertEqual(r["status"], 200)
+            body = json.loads(r["body"])
+            self.assertEqual([s["id"][:5] for s in body["active"]], ["US500"])
+            self.assertEqual(sorted(s["symbol"] for s in body["history"]), ["NAS100", "US30"])
+            self.assertEqual((body["record"]["trades"], body["record"]["wins"], body["record"]["total_r"]), (2, 1, 19.5))
+            self.assertEqual(body["by_symbol"]["NAS100"]["total_r"], 20.5)
+            self.assertEqual(asgi(appmod.create_app(st), "GET", "/swing")["status"], 200)
+
 
 if __name__ == "__main__":
     unittest.main()

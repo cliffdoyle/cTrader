@@ -251,9 +251,42 @@ def simulate(S, st, cfg, mode, cost, buffer, min_stop=0.0):
             "add_pending": (pending[0], pending[1]) if pending else None}
 
 
-def run(bars_by_sym, cfg=None, modes=("intraday", "swing"), buffers=None, costs=None, pips=None):
+def _unmirror(r):
+    """Prices of a sell-model result back from the mirrored series space (in place)."""
+    for k in ("H", "L", "T", "entry", "stop", "array_lo", "array_hi", "exit", "stop_now", "L_stop"):
+        if r.get(k) is not None:
+            r[k] = -r[k]
+    if "fvg" in r:
+        r["fvg"] = (-r["fvg"][1], -r["fvg"][0])
+    if "array_lo" in r:
+        r["array_lo"], r["array_hi"] = r["array_hi"], r["array_lo"]
+    r["events"] = [(e[0], e[1], -e[2], -e[3]) for e in r.get("events", [])]
+    if r.get("add_pending"):
+        r["add_pending"] = (-r["add_pending"][0], -r["add_pending"][1])
+
+
+def _carry(S, k, sign, mode, cfg, cost, buffer, min_stop):
+    """Keep following a setup that was already announced but is no longer detected (a newer intermediate high/low for
+    the same reversal took over its reversal point). Its own entry/stop/target are simulated on the current candles;
+    outcome "untracked" when its confirmation is older than the candles held."""
+    m = 1 if sign == 1 else -1
+    ends = [b.end for b in S.ex]
+    ci = bisect.bisect_right(ends, k["conf_t"]) - 1
+    st = {"symbol": k["symbol"], "mode": mode, "sign": sign, "conf_t": k["conf_t"], "carried": k["id"],
+          "entry": m * k["entry"], "stop": m * k["stop"], "T": m * k["T"],
+          "L": m * k["L"] if k.get("L") is not None else float("-inf")}
+    if ci < 0 or not S.ex or S.ex[0].t > k["conf_t"]:
+        return {**st, "outcome": "untracked", "exit_t": k["conf_t"], "events": [], "L": None}
+    r = simulate(S, {**st, "conf_i": ci}, cfg, mode, cost, buffer, min_stop)
+    r["L"] = None if k.get("L") is None else r["L"]
+    return r
+
+
+def run(bars_by_sym, cfg=None, modes=("intraday", "swing"), buffers=None, costs=None, pips=None, keep=None):
     """Detect and simulate MMXM buy and sell setups for every index in `bars_by_sym` (symbol → {tf: [Bar]}).
-    `pips` (symbol → pip size, default 1.0 = index points) converts cfg["min_stop_pips"] into price."""
+    `pips` (symbol → pip size, default 1.0 = index points) converts cfg["min_stop_pips"] into price.
+    `keep`: already-announced setups ({id, symbol, mode, dir, conf_t, entry, stop, T, L}) that must be followed to their
+    outcome even if this run no longer detects them (results carry "carried": id)."""
     cfg = {**MMXM_DEFAULTS, **(cfg or {})}
     min_stop = {s: (cfg["min_stop_pips"].get(s, 0) if isinstance(cfg["min_stop_pips"], dict) else cfg["min_stop_pips"])
                 * (pips or {}).get(s, 1.0) for s in bars_by_sym}
@@ -268,18 +301,19 @@ def run(bars_by_sym, cfg=None, modes=("intraday", "swing"), buffers=None, costs=
             for s in bars_by_sym:
                 setups, fun = detect(ser, s, mode, cfg, buffers[s], sign, min_stop[s])
                 funnels[(mode, "buy" if sign == 1 else "sell", s)] = fun
+                out = []
                 for st in setups:
                     r = simulate(ser[s], st, cfg, mode, costs[s], buffers[s], min_stop[s])
                     r["L_stop"] = st["L"] - buffers[s]  # the wider stop the backtest favoured (shown as information)
+                    out.append(r)
+                seen = {st["conf_t"] for st in setups}
+                for k in keep or ():
+                    if (k["symbol"] == s and k["mode"] == mode and (k["dir"] == "buy") == (sign == 1)
+                            and k["conf_t"] not in seen):
+                        out.append(_carry(ser[s], k, sign, mode, cfg, costs[s], buffers[s], min_stop[s]))
+                for r in out:
                     if sign == -1:
-                        for k in ("H", "L", "T", "entry", "stop", "array_lo", "array_hi", "exit", "stop_now", "L_stop"):
-                            if k in r:
-                                r[k] = -r[k]
-                        r["fvg"] = (-r["fvg"][1], -r["fvg"][0])
-                        r["array_lo"], r["array_hi"] = r["array_hi"], r["array_lo"]
-                        r["events"] = [(e[0], e[1], -e[2], -e[3]) for e in r["events"]]
-                        if r.get("add_pending"):
-                            r["add_pending"] = (-r["add_pending"][0], -r["add_pending"][1])
+                        _unmirror(r)
                     r["dir"] = "buy" if sign == 1 else "sell"
                     results.append(r)
     return results, funnels

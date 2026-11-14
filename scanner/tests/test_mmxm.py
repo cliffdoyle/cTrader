@@ -163,6 +163,113 @@ class MMXMTests(unittest.TestCase):
         self.assertEqual(len(s["checklist"]), 7)
         self.assertTrue(s["checklist"][4]["ok"])  # SMT
         self.assertIn("US500 held", s["checklist"][4]["detail"])
+        self.assertAlmostEqual(s["mmxm"]["L"], 91.9)
+
+    def _announced(self, res, shift):
+        r = [r for r in res if r["symbol"] == "NAS100" and r["dir"] == "buy"][0]
+        conf = r["conf_t"] - shift
+        return r, {"id": f"NAS100-MMXM-intraday-bull-{int(conf.timestamp())}", "symbol": "NAS100", "mode": "intraday",
+                   "dir": "buy", "conf_t": conf, "entry": r["entry"], "stop": r["stop"], "T": r["T"], "L": r["L"]}
+
+    def test_announced_setup_no_longer_detected_is_still_followed(self):
+        data = {"NAS100": tfs(textbook()), "US30": tfs(textbook()), "US500": tfs(textbook(floor=100.5))}
+        res, _ = self.run_model(data)
+        r, k = self._announced(res, timedelta(minutes=10))
+        with mock.patch.object(mmxm.Series, "_arrays", fake_arrays):
+            res2, _ = mmxm.run(data, CFG, modes=("intraday",), buffers=BUF, costs=COST, keep=[k])
+        carried = [x for x in res2 if x.get("carried") == k["id"]]
+        self.assertEqual(len(carried), 1)
+        self.assertEqual((carried[0]["outcome"], carried[0]["dir"]), ("target", "buy"))
+        self.assertAlmostEqual(carried[0]["R"], r["R"])
+        self.assertEqual(len([x for x in res2 if not x.get("carried") and x["symbol"] == "NAS100" and x["dir"] == "buy"]), 1)
+        # the detection itself is not carried twice
+        with mock.patch.object(mmxm.Series, "_arrays", fake_arrays):
+            res3, _ = mmxm.run(data, CFG, modes=("intraday",), buffers=BUF, costs=COST, keep=[{**k, "conf_t": r["conf_t"]}])
+        self.assertFalse(any(x.get("carried") for x in res3))
+
+    def test_carried_sell_and_untracked(self):
+        data = {"NAS100": tfs(textbook()), "US30": tfs(textbook()), "US500": tfs(textbook(floor=100.5))}
+        mirrored = {s: {tf: mmxm.mirror(b) for tf, b in d.items()} for s, d in data.items()}
+        res, _ = self.run_model(mirrored)
+        r = [r for r in res if r["symbol"] == "NAS100" and r["dir"] == "sell"][0]
+        k = {"id": "NAS100-MMXM-intraday-bear-1", "symbol": "NAS100", "mode": "intraday", "dir": "sell",
+             "conf_t": r["conf_t"] - timedelta(minutes=10), "entry": r["entry"], "stop": r["stop"], "T": r["T"], "L": None}
+        old = {**k, "id": "NAS100-MMXM-intraday-bear-2", "conf_t": T0 - timedelta(days=3)}
+        with mock.patch.object(mmxm.Series, "_arrays", fake_arrays):
+            res2, _ = mmxm.run(mirrored, CFG, modes=("intraday",), buffers=BUF, costs=COST, keep=[k, old])
+        got = {x["carried"]: x for x in res2 if x.get("carried")}
+        self.assertEqual(got[k["id"]]["outcome"], "target")
+        self.assertAlmostEqual(got[k["id"]]["entry"], r["entry"])
+        self.assertAlmostEqual(got[k["id"]]["events"][0][2], r["entry"])
+        self.assertEqual(got[old["id"]]["outcome"], "untracked")
+
+    def test_live_keeps_a_replaced_setup_and_its_limit(self):
+        from ictscan.engine import mmxm_live
+        data = {"NAS100": tfs(textbook()), "US30": tfs(textbook()), "US500": tfs(textbook(floor=100.5))}
+        now = T0 + timedelta(days=1)
+        with mock.patch.object(mmxm.Series, "_arrays", fake_arrays), mock.patch.object(mmxm, "MMXM_DEFAULTS", CFG):
+            rec = [s for s in mmxm_live.live_setups(data, now) if s["symbol"] == "NAS100"][0]
+            old_conf = int(rec["id"].split("-")[-1]) - 600
+            stale = {**rec, "id": f"NAS100-MMXM-intraday-bull-{old_conf}", "stage": "triggered",
+                     "timeline": [{**rec["timeline"][0], "note": "original limit"}, rec["timeline"][1]]}
+            out = {s["id"]: s for s in mmxm_live.live_setups(data, now, active=[stale])}
+        self.assertIn(rec["id"], out)
+        s = out[stale["id"]]
+        self.assertTrue(s["superseded"])
+        self.assertEqual(s["stage"], "target")
+        self.assertEqual(s["timeline"][0]["note"], "original limit")
+        self.assertEqual([e["stage"] for e in s["timeline"]], ["limit", "triggered", "target"])
+        self.assertIsNotNone(s["result_r"])
+        # an open trade older than the 7-day look-back is still updated
+        far = now + timedelta(days=30)
+        with mock.patch.object(mmxm.Series, "_arrays", fake_arrays), mock.patch.object(mmxm, "MMXM_DEFAULTS", CFG):
+            self.assertEqual(mmxm_live.live_setups(data, far), [])
+            kept = mmxm_live.live_setups(data, far, active=[{**rec, "stage": "triggered"}])
+        self.assertEqual([s["id"] for s in kept], [rec["id"]])
+
+
+class WeeklyTests(unittest.TestCase):
+    def test_report_groups_by_confirmation_week(self):
+        import tempfile
+        from pathlib import Path
+        from ictscan import weekly
+        from ictscan.store import Store
+
+        def rec(sym, mode, d, conf, stage, r):
+            return {"id": f"{sym}-MMXM-{mode}-{d[:4]}-{int(conf.timestamp())}", "symbol": sym, "setup": "MMXM",
+                    "name": "x", "dir": d, "stage": stage, "stage_t": conf.isoformat(), "key_t": conf.isoformat(),
+                    "score": 7, "grade": "A", "entry": 1.0, "stop": 0.5, "tp1": 3.0, "rr": 4.0, "result_r": r, "timeline": []}
+        wed = datetime(2026, 11, 11, 14, 0, tzinfo=timezone.utc)
+        prev = datetime(2026, 11, 4, 22, 15, tzinfo=timezone.utc)   # Wed 4 Nov 17:15 NY
+        sun = datetime(2026, 11, 8, 23, 30, tzinfo=timezone.utc)    # Sun 8 Nov 18:30 NY → week to Fri 13 Nov
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            st = Store(Path(d) / "t.db")
+            st.save_setups([rec("NAS100", "swing", "bearish", prev, "target", 53.57),
+                            rec("US500", "swing", "bearish", wed, "stopped", -1.02),
+                            rec("US30", "intraday", "bearish", sun, "stopped", -1.11),
+                            rec("US500", "intraday", "bullish", wed, "triggered", None),
+                            rec("NAS100", "intraday", "bearish", wed, "expired", None)])
+            now = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
+            rep = weekly.report(st, None, now)
+            self.assertEqual(rep["week"], "2026-11-13")
+            self.assertTrue(rep["closed"])
+            self.assertEqual(len(rep["setups"]), 4)
+            self.assertEqual(rep["totals"]["swing"], {"setups": 1, "closed": 1, "wins": 0, "losses": 1, "open": 0,
+                                                       "waiting": 0, "not_filled": 0, "net_r": -1.02, "best_r": -1.02})
+            self.assertEqual(rep["totals"]["intraday"]["open"], 1)
+            self.assertEqual(rep["totals"]["intraday"]["not_filled"], 1)
+            self.assertAlmostEqual(rep["forward"]["swing"]["net_r"], 52.55)
+            self.assertEqual(rep["weeks"], ["2026-11-13", "2026-11-06"])
+            self.assertEqual(weekly.report(st, weekly.parse_week("2026-11-04"), now)["totals"]["swing"]["wins"], 1)
+            self.assertIn("Swing: 1 setup, 0 won / 1 lost, -1.0R", weekly.summary_text(rep))
+            # one notification per closed week; not before the Friday close
+            self.assertEqual(weekly.maybe_notify(st, now), 1)
+            self.assertEqual(weekly.maybe_notify(st, now), 0)
+            notes = st.notifications(grades=("A",), kinds=("MMXM",))
+            self.assertEqual(notes[0]["setup_id"], "WEEKLY-MMXM-2026-11-13")
+            fri_noon = datetime(2026, 11, 20, 17, 0, tzinfo=timezone.utc)  # Fri 20 Nov 12:00 NY
+            self.assertEqual(weekly.last_closed_week(fri_noon).isoformat(), "2026-11-13")
+            self.assertEqual(weekly.maybe_notify(st, fri_noon), 0)
 
 
 if __name__ == "__main__":

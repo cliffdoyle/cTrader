@@ -158,6 +158,36 @@ def create_app(store, scanner=None):
     def cycles_page():
         return page("cycles.html")
 
+    @app.get("/weekly")
+    def weekly_page():
+        return page("weekly.html")
+
+    @app.get("/swing")
+    def swing_page():
+        return page("swing.html")
+
+    @app.get("/api/swing")
+    def swing():
+        """MMXM swing setups only: live ones, the full history, and their record (overall and per index)."""
+        everything = [s for s in store.setups(limit=100000, **FILT) if mode_of(s) == "swing"]
+        active = [s for s in everything if s["stage"] in ACTIVE]
+        closed = [s for s in everything if s["stage"] not in ACTIVE]
+        rec = performance(closed, days=36500)
+        by_sym = {sym: performance([s for s in closed if s["symbol"] == sym], days=36500)["all"] for sym in DASH_SYMS}
+        return {"unread": store.unread_count(**FILT), "health": store.get_meta("health"),
+                "active": [brief(s) for s in active], "history": [brief(s) for s in closed],
+                "record": rec["all"], "by_symbol": by_sym,
+                "since": min((s["timeline"][0]["t"] for s in everything if s["timeline"]), default=None)}
+
+    @app.get("/api/mmxm/weekly")
+    def mmxm_weekly(week: str | None = None):
+        from .. import weekly
+        try:
+            fri = weekly.parse_week(week)
+        except ValueError:
+            raise HTTPException(400, "week must be YYYY-MM-DD") from None
+        return weekly.report(store, fri)
+
     @app.get("/api/cycles/{sym}")
     def cycles(sym: str, kind: str = "90m", n: int = 8):
         if sym not in SYMBOLS or kind not in KIND_TF:

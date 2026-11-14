@@ -3,7 +3,7 @@ Built exactly as specified by the user (both timeframes, stop below the MSS FVG,
 (below the reversal low) is reported as information only."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from ..config import SYMBOLS
@@ -19,7 +19,8 @@ FINAL = {"target": ("target", "Terminus (original consolidation) reached"),
          "time": ("expired", "Time stop: closed at market"),
          "expired": ("expired", "Limit not filled in time"),
          "missed": ("missed", "Terminus reached before the limit filled"),
-         "invalidated": ("invalidated", "A candle closed beyond the reversal extreme before the fill")}
+         "invalidated": ("invalidated", "A candle closed beyond the reversal extreme before the fill"),
+         "untracked": ("expired", "No longer tracked: replaced by a newer setup and older than the scanner's candle history")}
 
 
 def in_killzone(t):
@@ -77,8 +78,15 @@ def to_record(r):
         {"name": "R:R to terminus ≥ 2", "ok": r["rr"] >= 2, "detail": f"{r['rr']:.1f}R"},
     ]
     s["score"] = sum(1 for c in s["checklist"] if c["ok"])
+    s["mmxm"] = {"L": f(r["L"]), "conf_t": r["conf_t"].isoformat()}  # lets a later scan keep following this setup
     stage(s, "limit", r["conf_t"], f"MSS confirmed: {word} limit at {f(r['entry'])}, stop {f(r['stop'])}, target {f(r['T'])}",
           f(r["entry"]))
+    _apply(s, r, f, word)
+    return s
+
+
+def _apply(s, r, f, word):
+    """Fill, adds and the final outcome of simulation result `r` onto record `s` (timeline + stage + result)."""
     for kind, t, price, stp in r.get("events", []):
         if kind == "filled":
             stage(s, "triggered", t, f"Limit filled at {f(price)}", f(price))
@@ -92,12 +100,45 @@ def to_record(r):
             s["result_r"] = round(r["R"], 2)
             note += f" ({r['R']:+.2f}R, {r.get('adds', 0)} add{'s' if r.get('adds', 0) != 1 else ''})"
         stage(s, name, r["exit_t"], note, f(r.get("exit")))
+
+
+def carried_record(stored, r):
+    """An announced setup that is no longer detected (a newer swing point took over its reversal): its stored record,
+    replayed from the original limit with the outcome of its own levels."""
+    dg = SYMBOLS[stored["symbol"]]["digits"]
+    f = lambda v: None if v is None else round(v, dg)  # noqa: E731
+    s = {**stored, "timeline": [e for e in stored["timeline"] if e["stage"] == "limit"][:1], "result_r": None}
+    s["stage"], s["stage_t"] = (s["timeline"][0]["stage"], s["timeline"][0]["t"]) if s["timeline"] else (None, None)
+    s["superseded"] = True
+    note = "A newer setup for the same reversal replaced this one in the detector; it is still followed with its own levels."
+    if note not in s.get("reasons", []):
+        s["reasons"] = [*s.get("reasons", []), note]
+    _apply(s, r, f, "buy" if stored["dir"] == "bullish" else "sell")
     return s
 
 
-def live_setups(bars_by_sym, now, lookback_days=7):
+def keep_item(rec):
+    """Stored MMXM record → the `keep` entry mmxm.run needs to keep simulating it."""
+    parts = rec["id"].split("-")
+    return {"id": rec["id"], "symbol": rec["symbol"], "mode": parts[2], "dir": "buy" if rec["dir"] == "bullish" else "sell",
+            "conf_t": datetime.fromtimestamp(int(parts[-1]), timezone.utc), "entry": rec["entry"], "stop": rec["stop"],
+            "T": rec["tp1"], "L": (rec.get("mmxm") or {}).get("L")}
+
+
+def live_setups(bars_by_sym, now, lookback_days=7, active=()):
+    """Setup records for the dashboard. `active` = stored MMXM records still waiting or in a trade: they keep being
+    followed even when they are older than `lookback_days` (a swing trade can run 10 days) or no longer detected."""
     buffers = {s: SYMBOLS[s]["buffer"] for s in mmxm.INDICES}
     pips = {s: SYMBOLS[s]["pip"] for s in mmxm.INDICES}
-    res, _ = mmxm.run(bars_by_sym, buffers=buffers, costs=buffers, pips=pips)
+    by_id = {a["id"]: a for a in active if a.get("setup") == "MMXM"}
+    res, _ = mmxm.run(bars_by_sym, buffers=buffers, costs=buffers, pips=pips, keep=[keep_item(a) for a in by_id.values()])
     since = now - timedelta(days=lookback_days)
-    return [to_record(r) for r in res if r["conf_t"] >= since]
+    out = []
+    for r in res:
+        if r.get("carried"):
+            out.append(carried_record(by_id[r["carried"]], r))
+        else:
+            rec = to_record(r)
+            if r["conf_t"] >= since or rec["id"] in by_id:
+                out.append(rec)
+    return out

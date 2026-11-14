@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Swing setups</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<main>
+  <div class="section-head"><h2>Live swing signals</h2><span class="count" id="live-count"></span></div>
+  <div id="live"></div>
+
+  <div class="section-head"><h2>Swing record</h2><span class="count" id="rec-sub"></span></div>
+  <div class="stats" id="stats"></div>
+
+  <div class="section-head"><h2>All swing setups</h2><span class="count" id="hist-sub"></span></div>
+  <div class="tabs" id="symf"></div>
+  <div class="panel"><table id="history"></table></div>
+
+  <footer class="note">Swing = market maker model with daily / 4H reversal levels and the entry on M15; a trade can run up to
+    10 days and exits at the original consolidation (terminus). Results are simulated from candles, spreads included.
+    These setups are rare (about 2 a week across the three indices in the backtest) and most of them lose — the result comes
+    from a few large winners, so a fair verdict needs months of signals. Not trading advice; the scanner never places orders.</footer>
+</main>
+<script src="/static/common.js"></script>
+<script>
+startShell();
+let data = null, symFilter = 'all';
+function statCard(k, v, sub, cls) { return `<div class="stat"><div class="k">${k}</div><div class="v ${cls || ''}">${v}</div><div class="s">${sub || ''}</div></div>`; }
+function render() {
+  const d = data;
+  document.getElementById('live-count').textContent = d.active.length ? `${d.active.length} active` : '';
+  document.getElementById('live').innerHTML = d.active.length ? `<div class="sig-grid">${d.active.map(signalCard).join('')}</div>`
+    : `<div class="empty"><div class="big">◇</div>No live swing signal right now.<div class="small dim">The scanner checks NAS100, US30 and US500 every 5 minutes; a swing signal pops up as soon as one completes.</div></div>`;
+  const a = d.record || {};
+  const cls = a.total_r > 0 ? 'bull' : a.total_r < 0 ? 'bear' : '';
+  document.getElementById('rec-sub').textContent = d.since ? `since ${new Date(d.since).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}` : '';
+  const per = Object.entries(d.by_symbol).map(([s, x]) => `${s}: ${x.trades ? `${x.trades} · ${fmtR(x.total_r)}` : '—'}`).join(' · ');
+  document.getElementById('stats').innerHTML =
+    statCard('Signals', a.signals ?? 0, `${a.trades ?? 0} filled · ${(a.signals ?? 0) - (a.trades ?? 0)} not filled`) +
+    statCard('Win rate', a.win_rate != null ? a.win_rate + '%' : '—', `${a.wins ?? 0} winners of ${a.trades ?? 0}`) +
+    statCard('Net result', a.trades ? fmtR(a.total_r) : '—', a.avg_r != null ? `${fmtR(a.avg_r)} per trade` : '', cls) +
+    statCard('By index', `<span class="small">${esc(per)}</span>`, '');
+  const syms = ['all', ...Object.keys(d.by_symbol)];
+  document.getElementById('symf').innerHTML = syms.map(s => `<button data-s="${s}" class="${s === symFilter ? 'on' : ''}">${s === 'all' ? 'All' : s}</button>`).join('');
+  document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { symFilter = b.dataset.s; render(); });
+  const rows = d.history.filter(s => symFilter === 'all' || s.symbol === symFilter);
+  document.getElementById('hist-sub').textContent = `${rows.length} closed`;
+  document.getElementById('history').innerHTML = RESULT_HEAD + (rows.length ? rows.map(resultRow).join('') : '<tr><td colspan="7" class="muted">No closed swing setups yet.</td></tr>');
+  updateSignalLive(LIVE);
+}
+async function load() { data = await api('/api/swing'); setUnread(data.unread); setHealth(data.health); render(); }
+load(); setInterval(load, 30000); startLive(updateSignalLive);
+</script>
+</body></html>

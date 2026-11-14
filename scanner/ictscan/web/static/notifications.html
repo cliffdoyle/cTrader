@@ -20,7 +20,7 @@ document.getElementById('readall').onclick = async () => { const r = await api('
 
 async function openNote(id, sid) {
   await api('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id] }) });
-  location.href = '/setup/' + encodeURIComponent(sid);
+  location.href = noteHref(sid);
 }
 async function load() {
   document.querySelectorAll('[data-f]').forEach(b => b.classList.toggle('on', b.dataset.f === filter));

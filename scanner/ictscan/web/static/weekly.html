@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — Weekly MMXM report</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<main>
+  <h1>Weekly MMXM report</h1>
+  <div class="tabs" id="weeks"></div>
+  <div id="out"><p class="muted">Loading…</p></div>
+  <p class="small muted">The live (forward) record of the market maker setups. A setup counts in the week it was confirmed
+    (when its alert went out). R = result in units of the first entry's risk, spreads included, adds counted at their
+    0.5R. "Replaced" = a newer setup for the same reversal took over in the detector; the original is still followed with
+    its own levels. A report is posted to the notifications after each Friday close (17:00 NY).</p>
+</main>
+<script src="/static/common.js"></script>
+<script>
+startShell();
+const MODES = { swing: 'Swing (D1/H4 → M15)', intraday: 'Intraday (H1/H4 → M5)' };
+function tallyRow(name, t) {
+  const net = t.net_r > 0 ? 'bull' : t.net_r < 0 ? 'bear' : '';
+  return `<tr><td><b>${esc(name)}</b></td><td>${t.setups}</td><td>${t.closed}</td><td>${t.wins} / ${t.losses}</td>
+    <td>${t.closed ? Math.round(100 * t.wins / t.closed) + '%' : '—'}</td><td>${t.open}</td><td>${t.not_filled}</td>
+    <td class="${net}"><b>${fmtR(t.net_r) || '0.00R'}</b></td><td>${t.closed ? fmtR(t.best_r) : ''}</td></tr>`;
+}
+const HEAD = '<tr><th></th><th>Setups</th><th>Closed</th><th>Won / lost</th><th>Win rate</th><th>Open</th><th>Not filled</th><th>Net</th><th>Best</th></tr>';
+async function load(week) {
+  const r = await api('/api/mmxm/weekly' + (week ? '?week=' + encodeURIComponent(week) : ''));
+  document.getElementById('weeks').innerHTML = r.weeks.slice(0, 12).map(w =>
+    `<button data-w="${w}" class="${w === r.week ? 'on' : ''}">Week to ${esc(w.slice(5))}</button>`).join('');
+  document.querySelectorAll('[data-w]').forEach(b => b.onclick = () => { history.replaceState(null, '', '/weekly?week=' + b.dataset.w); load(b.dataset.w); });
+  const rows = r.setups.map(s => `<tr>
+      <td><a href="/setup/${encodeURIComponent(s.id)}"><b>${esc(s.symbol)}</b></a> <span class="small muted">${esc(s.mode)}</span></td>
+      <td>${s.dir === 'buy' ? '<span class="bull">▲ buy</span>' : '<span class="bear">▼ sell</span>'}</td>
+      <td class="small">${esc(s.confirmed_ny)}</td><td class="small">${s.entry} / ${s.stop} / ${s.target}</td>
+      <td>${stage(s.stage)}${s.superseded ? ' <span class="small muted">replaced</span>' : ''}<div class="small muted">${esc(s.stage_ny)}</div></td>
+      <td class="${s.result_r > 0 ? 'bull' : s.result_r < 0 ? 'bear' : ''}"><b>${fmtR(s.result_r)}</b></td></tr>`).join('');
+  const since = new Date(r.since).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const hist = r.history.slice().reverse().map(h => `<tr><td>${esc(h.week)}</td>
+      <td class="${h.swing.net_r > 0 ? 'bull' : h.swing.net_r < 0 ? 'bear' : ''}">${h.swing.setups ? fmtR(h.swing.net_r) || '0.00R' : '—'} <span class="small muted">${h.swing.setups ? `${h.swing.wins}W/${h.swing.losses}L` : ''}</span></td>
+      <td class="${h.intraday.net_r > 0 ? 'bull' : h.intraday.net_r < 0 ? 'bear' : ''}">${h.intraday.setups ? fmtR(h.intraday.net_r) || '0.00R' : '—'} <span class="small muted">${h.intraday.setups ? `${h.intraday.wins}W/${h.intraday.losses}L` : ''}</span></td></tr>`).join('');
+  document.getElementById('out').innerHTML = `
+    <h2>Week to Fri ${esc(r.week)} <span class="small muted">(${ny(r.from)} → ${ny(r.to)}${r.closed ? '' : ' · still running'})</span></h2>
+    <div class="panel"><table>${HEAD}${Object.entries(MODES).map(([m, n]) => tallyRow(n, r.totals[m])).join('')}</table></div>
+    <div class="panel"><table><tr><th>Setup</th><th>Dir</th><th>Confirmed (NY)</th><th>Entry / stop / target</th><th>Outcome</th><th>R</th></tr>
+      ${rows || '<tr><td colspan="6" class="muted">No MMXM setups this week.</td></tr>'}</table></div>
+    <h2>Forward record since ${esc(since)}</h2>
+    <div class="panel"><table>${HEAD}${Object.entries(MODES).map(([m, n]) => tallyRow(n, r.forward[m])).join('')}</table></div>
+    <div class="panel"><table><tr><th>Week to</th><th>Swing</th><th>Intraday</th></tr>${hist}</table></div>`;
+}
+load(new URLSearchParams(location.search).get('week'));
+</script>
+</body></html>

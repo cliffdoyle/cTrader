@@ -17,13 +17,15 @@ function arrow(dir) { return dir === 'bullish' ? '<span class="bull">▲ long</s
 function fmtR(r) { return r == null ? '' : (r > 0 ? '+' : '') + Number(r).toFixed(2) + 'R'; }
 function gradeBadge(s) { return s.grade ? `<span class="grade g${esc(s.grade)}" title="${esc(s.grade_note || '')}">${esc(s.grade)}</span>` : ''; }
 async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(`${r.status} ${path}`); return r.json(); }
+// where a notification opens: a setup page, or the weekly report for WEEKLY-MMXM-<friday>
+function noteHref(sid) { sid = String(sid || ''); return sid.startsWith('WEEKLY-') ? '/weekly?week=' + encodeURIComponent(sid.slice(-10)) : '/setup/' + encodeURIComponent(sid); }
 
 function renderHeader() {
   const h = document.createElement('header');
   const here = location.pathname;
   const link = (href, label) => `<a href="${href}" class="${here === href ? 'on' : ''}">${label}</a>`;
   h.innerHTML = `<a class="brand" href="/"><span class="logo">◆</span><span>ICT Scanner<small>Market maker models · US indices</small></span></a>
-    <nav>${link('/', 'Overview')}${link('/cycles', 'Time cycles')}${NAV.map(s => link(`/symbol/${s}`, s)).join('')}</nav>
+    <nav>${link('/', 'Overview')}${link('/cycles', 'Time cycles')}${link('/swing', 'Swing')}${link('/weekly', 'Weekly')}${NAV.map(s => link(`/symbol/${s}`, s)).join('')}</nav>
     <span class="spacer"></span>
     <span id="live-badge" class="livebadge off" title="Prices stream every second from Pepperstone while the market is open">…</span>
     <span id="health" class="small muted"></span>
@@ -48,7 +50,7 @@ function setHealth(h) {
 function toast(n) {
   const box = document.getElementById('toasts');
   const d = document.createElement('div'); d.className = 'toast ' + (n.level === 'result' ? 'result' : '');
-  d.innerHTML = `<div class="t">${esc(n.title)}</div><div class="small">${esc(n.body)}</div><div class="small"><a href="/setup/${encodeURIComponent(n.setup_id)}">open setup →</a></div>`;
+  d.innerHTML = `<div class="t">${esc(n.title)}</div><div class="small">${esc(n.body)}</div><div class="small"><a href="${noteHref(n.setup_id)}">${String(n.setup_id || '').startsWith('WEEKLY-') ? 'open report' : 'open setup'} →</a></div>`;
   box.appendChild(d); setTimeout(() => d.remove(), 20000);
 }
 
@@ -65,7 +67,7 @@ async function pollNotifications() {
       toast(n);
       if ('Notification' in window && Notification.permission === 'granted') {
         const bn = new Notification(n.title, { body: n.body, tag: `${n.setup_id}:${n.stage}` });
-        bn.onclick = () => { window.focus(); location.href = '/setup/' + encodeURIComponent(n.setup_id); };
+        bn.onclick = () => { window.focus(); location.href = noteHref(n.setup_id); };
       }
     }
     localStorage.setItem(key, last); setUnread(r.unread);
