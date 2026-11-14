@@ -72,6 +72,11 @@ Differences from the cTrader / MT5 add-ons:
   took it, or on this index's own high/low ("SMT ▼ Day PXH not taken · NAS100 took it") when it did not. It is live from
   the first tick (the forming candle counts, unlike the scanner which waits for closed candles), so it disappears again
   if the lagging index also takes the level. 90-min markers show up to M30, day up to H4, week everywhere.
+- **Session SMT** ("SMT at Asia / London / NY AM highs and lows", on by default): once a session has closed, its high and
+  low are watched on every index for the rest of that trading day; when one index trades through, e.g., its Asia high and
+  another has not, the same live marker appears ("SMT ▼ Asia high taken · US500 did not"), the panel can use it as the
+  direction SMT (weight of a 90-min cycle) and an alert fires. Computed inside the existing 5m request per index, so it
+  costs no extra data request. Markers show up to H1.
 - **Alerts**: right-click the indicator → Add alert → condition "ICT Scanner Levels" → **Any alert() function call**. You
   get one alert per new SMT (cycle SMTs and 5m / 15m / 1H swing SMTs), with the indices that took / did not take the level.
 - A text "row" is a fixed 0.3 × H1 ATR (Pine cannot read the zoom), so at extreme zoom levels neighbouring labels can touch.

@@ -28,7 +28,8 @@ cDay = input.bool(true, "Cycle: day", group = G_LVL)
 c90 = input.bool(true, "Cycle: 90-min", group = G_LVL)
 
 showSmt = input.bool(true, "SMT panel", group = G_SMT)
-smtMarks = input.bool(true, "Mark cycle SMT on the chart", group = G_SMT, tooltip = "As soon as one index takes the previous 90-min / day / week high (low) and another does not, label the candle that took it (or this index's failed high / low) and highlight the level. Alerts: create an alert on this indicator with \"Any alert() function call\".")
+smtMarks = input.bool(true, "Mark level SMT on the chart", group = G_SMT, tooltip = "As soon as one index takes a level (previous 90-min / day / week high or low, or a closed Asia / London / NY AM session high or low) and another does not, label the candle that took it (or this index's failed high / low) and highlight the level. Alerts: create an alert on this indicator with \"Any alert() function call\".")
+smtSess = input.bool(true, "SMT at Asia / London / NY AM highs and lows", group = G_SMT, tooltip = "After a session closes, watch its high and low on every index for the rest of the trading day.")
 smtPair = input.string("All three", "SMT compare", options = ["All three", "NAS100 vs US500", "NAS100 vs US30", "US500 vs US30"], group = G_SMT)
 symNQ = input.symbol("PEPPERSTONE:NAS100", "NAS100", group = G_SMT)
 symYM = input.symbol("PEPPERSTONE:US30", "US30", group = G_SMT)
@@ -275,6 +276,59 @@ sessBounds(int w, int td) =>
     int b = w == 0 ? (sessStyle == "Continuous" ? dayAt(td, 0, 2, 0) : td) : w == 1 ? dayAt(td, 0, 5, 0) : dayAt(td, 0, 11, 30)
     [a, b]
 
+// Session SMT inputs per index and session (NS values), built on 5m bars of the current trading day:
+// [session high, low, end, trading day, time its high was first taken after the end, same for the low,
+//  highest high since the end, lowest low since the end, their times]
+NS = 10
+sessTrack(int w, int td) =>
+    var float sH = na
+    var float sL = na
+    var int sE = na
+    var int sKey = na
+    var int tH = na
+    var int tL = na
+    var float xH = na
+    var float xL = na
+    var int xHT = na
+    var int xLT = na
+    [a, b] = sessBounds(w, td)
+    if time >= a and time < b
+        if na(sKey) or sKey != td
+            sKey := td
+            sE := b
+            sH := high
+            sL := low
+            tH := na
+            tL := na
+            xH := na
+            xL := na
+            xHT := na
+            xLT := na
+        else
+            sH := math.max(sH, high)
+            sL := math.min(sL, low)
+    else if not na(sKey) and sKey == td and time >= sE
+        if na(xH) or high > xH
+            xH := high
+            xHT := time
+        if na(xL) or low < xL
+            xL := low
+            xLT := time
+        if na(tH) and high > sH
+            tH := time
+        if na(tL) and low < sL
+            tL := time
+    array.from(sH, sL, float(sE), float(sKey), float(tH), float(tL), xH, xL, float(xHT), float(xLT))
+
+// everything the SMT needs from the 5m data of one index: the 90-min cycle (NV values) + Asia, London, NY AM (NS each)
+eng5() =>
+    int td = tradingDay(time)
+    array<float> r = eng90()
+    array.concat(r, sessTrack(0, td))
+    array.concat(r, sessTrack(1, td))
+    array.concat(r, sessTrack(2, td))
+    r
+
 var array<Rec> sessRecs = array.new<Rec>()
 var array<Rec> lastByW = array.new<Rec>(3)
 var array<Rec> winRecs = array.new<Rec>()
@@ -357,6 +411,14 @@ isLive(int kind, int cK, int nowT) =>
 // one for every SMT that already exists
 varip string alerted = ""
 varip bool alertsPrimed = false
+
+// when this chart's own candles first took session w's high (low) on trading day td (na if not, or not tracked here)
+sessTakenOnChart(int w, int td, bool isHigh) =>
+    int t = na
+    for r in sessRecs
+        if r.w == w and r.td == td
+            t := isHigh ? r.tkH : r.tkL
+    t
 
 // ───────────────────────────── Levels (draw_levels.plan_levels)
 allowTag(string tag) =>
@@ -623,18 +685,58 @@ cycleSmt(int kind, int tf, array<float> v, array<int> syms, int nowT, int chartI
                     int extT = int(array.get(v, c + (bear ? 5 : 6)))
                     array.push(out, Ev.new(0, tf, tfName(tf), tfWeight(tf), bear, t, per, held, 0, lvlP, chartTook ? tookT : na, extP, extT, chartTook ? "took" : "held", lead, int(array.get(v, c + 7))))
 
+sessLabel(int w) => w == 0 ? "Asia" : w == 1 ? "London" : "NY AM"
+
+// session SMT: after a session (Asia / London / NY AM) has closed, one index trades through that session's high (low)
+// and another has not, on the same trading day. vS holds NS values per (session, index): offset (w * 3 + s) * NS.
+sessionSmt(int w, array<float> vS, array<int> syms, int nowT, int chartI, array<Ev> out) =>
+    int tdNow = tradingDay(nowT)
+    bool ok = array.size(syms) >= 2
+    for s in syms
+        int b = (w * 3 + s) * NS
+        if na(array.get(vS, b)) or array.get(vS, b + 3) != tdNow or array.get(vS, b + 2) > nowT
+            ok := false
+    if ok
+        for side = 0 to 1
+            bool bear = side == 0
+            string per = ""
+            string held = ""
+            string lead = ""
+            int nTook = 0
+            int nHeld = 0
+            int t = 0
+            for s in syms
+                int b = (w * 3 + s) * NS
+                float tk = array.get(vS, b + (bear ? 4 : 5))
+                per += (per == "" ? "" : " · ") + symName(s) + (na(tk) ? " ✗" : " ✓")
+                if na(tk)
+                    nHeld += 1
+                    held += (held == "" ? "" : " / ") + symName(s)
+                else
+                    nTook += 1
+                    lead += (lead == "" ? "" : " / ") + symName(s)
+                    t := math.max(t, int(tk))
+            if nTook > 0 and nHeld > 0
+                int c = (w * 3 + chartI) * NS
+                float tkC = array.get(vS, c + (bear ? 4 : 5))
+                [a, e] = sessBounds(w, tdNow)
+                array.push(out, Ev.new(2, 20 + w, sessLabel(w), 3, bear, t, per, held, 0, array.get(vS, c + (bear ? 0 : 1)), na(tkC) ? na : int(tkC), array.get(vS, c + (bear ? 6 : 7)), int(array.get(vS, c + (bear ? 8 : 9))), na(tkC) ? "held" : "took", lead, a))
+
 // all requests for one index (only run on the last bar)
-fetch(int i, string sym, array<float> v90, array<float> vD, array<float> vW, array<Ser> s5, array<Ser> s15, array<Ser> s60) =>
-    array<float> e90 = request.security(sym, "5", eng90(), ignore_invalid_symbol = true, calc_bars_count = 600)
+fetch(int i, string sym, array<float> v90, array<float> vS, array<float> vD, array<float> vW, array<Ser> s5, array<Ser> s15, array<Ser> s60) =>
+    array<float> e5 = request.security(sym, "5", eng5(), ignore_invalid_symbol = true, calc_bars_count = 600)
     array<float> eDW = request.security(sym, "60", engDW(), ignore_invalid_symbol = true, calc_bars_count = 800)
     array<float> r5 = request.security(sym, "5", pack(120), ignore_invalid_symbol = true, calc_bars_count = 400)
     array<float> r15 = request.security(sym, "15", pack(140), ignore_invalid_symbol = true, calc_bars_count = 400)
     array<float> r60 = request.security(sym, "60", pack(120), ignore_invalid_symbol = true, calc_bars_count = 400)
     int o = i * NV
     for j = 0 to NV - 1
-        array.set(v90, o + j, na(e90) ? na : array.get(e90, j))
+        array.set(v90, o + j, na(e5) ? na : array.get(e5, j))
         array.set(vD, o + j, na(eDW) ? na : array.get(eDW, j))
         array.set(vW, o + j, na(eDW) ? na : array.get(eDW, NV + j))
+    for w = 0 to 2
+        for j = 0 to NS - 1
+            array.set(vS, (w * 3 + i) * NS + j, na(e5) ? na : array.get(e5, NV + w * NS + j))
     array.set(s5, i, newSer(r5))
     array.set(s15, i, newSer(r15))
     array.set(s60, i, newSer(r60))
@@ -801,17 +903,18 @@ if barstate.islast
             array.push(rowBold, false)
         else
             array<float> v90 = array.new<float>(3 * NV, na)
+            array<float> vS = array.new<float>(9 * NS, na)
             array<float> vD = array.new<float>(3 * NV, na)
             array<float> vW = array.new<float>(3 * NV, na)
             array<Ser> s5 = array.new<Ser>(3)
             array<Ser> s15 = array.new<Ser>(3)
             array<Ser> s60 = array.new<Ser>(3)
             if array.includes(syms, 0)
-                fetch(0, symNQ, v90, vD, vW, s5, s15, s60)
+                fetch(0, symNQ, v90, vS, vD, vW, s5, s15, s60)
             if array.includes(syms, 1)
-                fetch(1, symYM, v90, vD, vW, s5, s15, s60)
+                fetch(1, symYM, v90, vS, vD, vW, s5, s15, s60)
             if array.includes(syms, 2)
-                fetch(2, symES, v90, vD, vW, s5, s15, s60)
+                fetch(2, symES, v90, vS, vD, vW, s5, s15, s60)
             array<Ev> evs = array.new<Ev>()
             swingSmt(s5, syms, 0, 5 * MINUTE, 6 * HOUR, nowT, chartI, evs)
             swingSmt(s15, syms, 1, 15 * MINUTE, 24 * HOUR, nowT, chartI, evs)
@@ -819,20 +922,24 @@ if barstate.islast
             cycleSmt(0, 10, v90, syms, nowT, chartI, evs)
             cycleSmt(1, 11, vD, syms, nowT, chartI, evs)
             cycleSmt(2, 12, vW, syms, nowT, chartI, evs)
-            // mark every live cycle SMT on this chart at the level where it formed: the candle that took the PXH/PXL when this
-            // index took it, or this index's own high/low (the one that failed to take it) when it did not
+            if smtSess
+                for w = 0 to 2
+                    sessionSmt(w, vS, syms, nowT, chartI, evs)
+            // mark every live level SMT on this chart where it formed: the candle that took the level when this index took
+            // it, or this index's own high/low (the one that failed to take it) when it did not
             if smtMarks
                 array<int> usedT = array.new<int>()
                 for e in evs
-                    if e.src == 0 and not na(e.p1)
+                    if e.src != 1 and not na(e.p1)
                         bool fits90 = e.tf != 10 or tier == 0 or tier <= 2
                         bool fitsDay = e.tf != 11 or tier == 0 or tier <= 4
-                        if fits90 and fitsDay
+                        bool fitsSess = e.src != 2 or tier == 0 or tier <= 3
+                        if fits90 and fitsDay and fitsSess
                             color mc = e.bear ? COL_BEAR : COL_BULL
-                            string lvlName = e.name + (e.bear ? " PXH" : " PXL")
+                            string lvlName = e.name + (e.src == 2 ? (e.bear ? " high" : " low") : (e.bear ? " PXH" : " PXL"))
                             bool took = e.lab == "took"
                             // the moment this chart's own candles took the level (finer than the 5m / 1H request data)
-                            int chartTook = e.tf == 11 ? (e.bear ? pdhT : pdlT) : e.tf == 12 ? (e.bear ? pwhT : pwlT) : (tfSec <= 1800 and isLive(0, nCK, nowT) ? (e.bear ? nTH : nTL) : na)
+                            int chartTook = e.src == 2 ? sessTakenOnChart(e.tf - 20, tdNow, e.bear) : e.tf == 11 ? (e.bear ? pdhT : pdlT) : e.tf == 12 ? (e.bear ? pwhT : pwlT) : (tfSec <= 1800 and isLive(0, nCK, nowT) ? (e.bear ? nTH : nTL) : na)
                             int mt = took ? (na(chartTook) ? e.t1 : chartTook) : e.t2
                             float mp = took ? e.p1 : e.p2
                             if not na(mt) and not na(mp)
@@ -861,10 +968,10 @@ if barstate.islast
             // alert once per new SMT (cycle SMTs and live 5m / 15m / 1H swing SMTs); create a TradingView alert on this
             // indicator with "Any alert() function call" to receive them
             for e in rk
-                string akey = str.tostring(e.src) + "|" + str.tostring(e.tf) + "|" + (e.bear ? "B" : "S") + "|" + str.tostring(e.src == 0 ? e.t0 : e.t) + ";"
+                string akey = str.tostring(e.src) + "|" + str.tostring(e.tf) + "|" + (e.bear ? "B" : "S") + "|" + str.tostring(e.src != 1 ? e.t0 : e.t) + ";"
                 if not str.contains(alerted, akey)
                     alerted += akey
-                    string what = e.src == 0 ? e.lead + " took the " + e.name + (e.bear ? " PXH, " : " PXL, ") + e.lag + " did not" : e.name + " swing: " + e.per
+                    string what = e.src == 0 ? e.lead + " took the " + e.name + (e.bear ? " PXH, " : " PXL, ") + e.lag + " did not" : e.src == 2 ? e.lead + " took the " + e.name + (e.bear ? " high, " : " low, ") + e.lag + " did not" : e.name + " swing: " + e.per
                     if alertsPrimed
                         alert(syminfo.ticker + " · " + (e.bear ? "BEARISH" : "BULLISH") + " " + e.name + " SMT · " + what + " (" + hm(nowT) + " NY)", alert.freq_all)
             alertsPrimed := barstate.isrealtime
@@ -894,7 +1001,7 @@ if barstate.islast
                 array.push(rows, (bear ? "▼ BEARISH" : "▲ BULLISH") + " SMT  ·  divergence at the " + (bear ? "highs" : "lows") + (array.size(syms) == 2 ? "  ·  " + pairTxt : ""))
                 array.push(rowCol, col)
                 array.push(rowBold, true)
-                array.push(rows, bias.name + (bias.src == 0 ? " cycle" : " swing") + ":  " + bias.per + (bias.src == 0 ? (bear ? "   (took PXH)" : "   (took PXL)") : ""))
+                array.push(rows, bias.name + (bias.src == 0 ? " cycle" : bias.src == 2 ? " session" : " swing") + ":  " + bias.per + (bias.src == 0 ? (bear ? "   (took PXH)" : "   (took PXL)") : bias.src == 2 ? (bear ? "   (took the high)" : "   (took the low)") : ""))
                 array.push(rowCol, chart.fg_color)
                 array.push(rowBold, false)
                 if not na(trig)
