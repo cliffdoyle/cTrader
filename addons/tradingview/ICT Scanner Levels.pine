@@ -1,0 +1,921 @@
+//@version=6
+// ICT Scanner Levels — TradingView version of the scanner's chart add-on (cTrader indicator / MT5 expert).
+// Pine Script cannot download the scanner feed, so this script rebuilds the same drawings from TradingView's own candles
+// with the scanner's rules: session boxes (drawing.plan_sessions), 90-minute boxes (draw_cycles.plan_boxes), previous-cycle
+// PXH / EQ / PXL (draw_cycles.plan), key levels (draw_levels.plan_levels) and the SMT panel (engine/smt.py).
+// Times are New York (DST-aware); the trading day rolls at 17:00 NY. Use PEPPERSTONE symbols so prices match the scanner.
+indicator("ICT Scanner Levels", "ICT Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ───────────────────────────── Inputs
+G_SESS = "Sessions"
+G_LVL = "Levels and cycles"
+G_SMT = "SMT"
+G_LOOK = "Look"
+
+showSess = input.bool(true, "Session boxes", group = G_SESS)
+sAsia = input.bool(true, "Asia", group = G_SESS)
+sLondon = input.bool(true, "London", group = G_SESS)
+sNY = input.bool(false, "New York AM", group = G_SESS)
+sessDays = input.int(1, "Days", minval = 1, maxval = 5, group = G_SESS, tooltip = "Trading days of session boxes. The latest day also gets open/close ticks and dotted high/low lines that stop where price swept them.")
+sessStyle = input.string("Kill zones", "Asia window", options = ["Kill zones", "Continuous"], group = G_SESS, tooltip = "Kill zones: Asia 20:00-00:00 and London 02:00-05:00 NY. Continuous: Asia 20:00-02:00 runs straight into London.")
+
+showBoxes = input.bool(true, "90-minute boxes (latest day)", group = G_LVL)
+showLevels = input.bool(true, "Key levels: PW / PD / session highs-lows / midnight open", group = G_LVL)
+showCyc = input.bool(true, "Previous-cycle PXH / EQ / PXL", group = G_LVL)
+cMonth = input.bool(false, "Cycle: month", group = G_LVL)
+cWeek = input.bool(true, "Cycle: week", group = G_LVL)
+cDay = input.bool(true, "Cycle: day", group = G_LVL)
+c90 = input.bool(true, "Cycle: 90-min", group = G_LVL)
+
+showSmt = input.bool(true, "SMT panel", group = G_SMT)
+smtMarks = input.bool(true, "Mark cycle SMT on the chart", group = G_SMT, tooltip = "As soon as one index takes the previous 90-min / day / week high (low) and another does not, label the candle that took it (or this index's failed high / low) and highlight the level. Alerts: create an alert on this indicator with \"Any alert() function call\".")
+smtPair = input.string("All three", "SMT compare", options = ["All three", "NAS100 vs US500", "NAS100 vs US30", "US500 vs US30"], group = G_SMT)
+symNQ = input.symbol("PEPPERSTONE:NAS100", "NAS100", group = G_SMT)
+symYM = input.symbol("PEPPERSTONE:US30", "US30", group = G_SMT)
+symES = input.symbol("PEPPERSTONE:US500", "US500", group = G_SMT)
+
+fitTf = input.bool(true, "Fit to timeframe", group = G_LOOK, tooltip = "Draw only what reads well on this timeframe: 90-min boxes up to M30, sessions up to H1, day cycle up to H4, only PW/PD levels on H4 and PW on D1+.")
+txtSizeIn = input.string("Normal", "Text size", options = ["Small", "Normal", "Large"], group = G_LOOK)
+panelIn = input.string("Top right", "SMT panel position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = G_LOOK)
+
+// ───────────────────────────── Constants
+NYZ = "America/New_York"
+MINUTE = 60000
+HOUR = 3600000
+DAY = 86400000
+TXT = txtSizeIn == "Small" ? size.small : txtSizeIn == "Large" ? size.large : size.normal
+NONE = #00000000
+DIM = #8A97A8
+COL_BEAR = #FF5C6C
+COL_BULL = #2BD4A4
+COL_WARN = #F5B84A
+COL_PW = #B388FF
+COL_ASIA_LV = #FFD600
+COL_LON_LV = #00E5FF
+COL_NY_LV = #FF9100
+COL_OPEN = #9E9E9E
+PANEL_POS = panelIn == "Bottom right" ? position.bottom_right : panelIn == "Top left" ? position.top_left : panelIn == "Bottom left" ? position.bottom_left : position.top_right
+
+// Fit to the chart's timeframe (same tiers as the cTrader / MT5 add-ons): 1 ≤ M5 · 2 ≤ M30 · 3 = H1 · 4 ≤ H4 · 5 ≥ D1
+tfSec = timeframe.in_seconds()
+tier = not fitTf ? 0 : tfSec <= 300 ? 1 : tfSec <= 1800 ? 2 : tfSec <= 3600 ? 3 : tfSec <= 14400 ? 4 : 5
+fits(int maxTier) => tier == 0 or tier <= maxTier
+doSess = showSess and fits(3) and tfSec <= 3600 and (sAsia or sLondon or sNY)
+doBoxes = showBoxes and fits(2) and tfSec <= 1800
+doLevels = showLevels and fits(5)
+doCyc = showCyc and fits(5)
+doSmt = showSmt and fits(5)
+k90 = c90 and fits(2) and tfSec <= 1800
+kDay = cDay and fits(4)
+kWeek = cWeek and fits(5)
+kMonth = cMonth and fits(5)
+compact = tier == 3
+
+// ───────────────────────────── Time helpers (New York clock)
+nyMidnight(int t) => timestamp(NYZ, year(t, NYZ), month(t, NYZ), dayofmonth(t, NYZ), 0, 0)
+
+// NY time hh:mm on the date `n` days after the NY midnight `dayMid` (the +6h keeps DST days on the right date)
+dayAt(int dayMid, int n, int hh, int mm) =>
+    int s = dayMid + n * DAY + 6 * HOUR
+    timestamp(NYZ, year(s, NYZ), month(s, NYZ), dayofmonth(s, NYZ), hh, mm)
+
+wday(int dayMid) => dayofweek(dayMid + 6 * HOUR, NYZ)
+
+// NY midnight of the trading date of bar-start time t: the session opening 18:00 NY the evening before, closing 17:00 NY
+tradingDay(int t) =>
+    int d = nyMidnight(t + 7 * HOUR)
+    int w = wday(d)
+    w == dayofweek.saturday ? dayAt(d, 2, 0, 0) : w == dayofweek.sunday ? dayAt(d, 1, 0, 0) : d
+
+// (key, start, end) of the cycle containing bar-start time t — kind 0 = 90m, 1 = day, 2 = week, 3 = month (engine/cycles.py)
+cycleOf(int kind, int t) =>
+    int td = tradingDay(t)
+    int key = na
+    int st = na
+    int en = na
+    if kind == 0
+        if nyMidnight(t) == td
+            int m = hour(t, NYZ) * 60 + minute(t, NYZ)
+            if m >= 420 and m < 960
+                int i = int(math.floor((m - 420) / 90))
+                int sm = 420 + 90 * i
+                key := td + i + 1
+                st := dayAt(td, 0, int(math.floor(sm / 60)), sm % 60)
+                en := st + 90 * MINUTE
+    else if kind == 1
+        key := td
+        st := dayAt(td, wday(td) == dayofweek.monday ? -3 : -1, 18, 0)
+        en := dayAt(td, 0, 17, 0)
+    else if kind == 2
+        int mon = dayAt(td, dayofweek.monday - wday(td), 0, 0)
+        key := mon
+        st := dayAt(mon, -1, 18, 0)
+        en := dayAt(mon, 4, 17, 0)
+    else
+        int s = td + 6 * HOUR
+        int y = year(s, NYZ)
+        int mo = month(s, NYZ)
+        key := y * 100 + mo
+        int first = timestamp(NYZ, y, mo, 1, 0, 0)
+        st := dayAt(first, -1, 18, 0)
+        int nxt = mo == 12 ? timestamp(NYZ, y + 1, 1, 1, 0, 0) : timestamp(NYZ, y, mo + 1, 1, 0, 0)
+        int last = dayAt(nxt, -1, 0, 0)
+        while wday(last) == dayofweek.saturday or wday(last) == dayofweek.sunday
+            last := dayAt(last, -1, 0, 0)
+        en := dayAt(last, 0, 17, 0)
+    [key, st, en]
+
+// Current and previous cycle of one kind, built bar by bar:
+// [prev high, prev low, prev start, prev end, prev first bar, cur key, cur start, cur end, cur high, cur low, cur first bar,
+//  cur high time, cur low time, time the cur cycle first traded above the prev high, time it first traded below the prev low]
+cycTrack(int kind) =>
+    var int tH = na
+    var int tL = na
+    var int cK = na
+    var int cS = na
+    var int cE = na
+    var int cF = na
+    var float cH = na
+    var float cL = na
+    var int cHT = na
+    var int cLT = na
+    var float pH = na
+    var float pL = na
+    var int pS = na
+    var int pE = na
+    var int pF = na
+    [k, st, en] = cycleOf(kind, time)
+    if not na(k)
+        if na(cK) or k != cK
+            pH := cH
+            pL := cL
+            pS := cS
+            pE := cE
+            pF := cF
+            cK := k
+            cS := st
+            cE := en
+            cF := time
+            cH := high
+            cL := low
+            cHT := time
+            cLT := time
+            tH := na
+            tL := na
+        else
+            if high > cH
+                cH := high
+                cHT := time
+            if low < cL
+                cL := low
+                cLT := time
+        if na(tH) and not na(pH) and high > pH
+            tH := time
+        if na(tL) and not na(pL) and low < pL
+            tL := time
+    [pH, pL, pS, pE, pF, cK, cS, cE, cH, cL, cF, cHT, cLT, tH, tL]
+
+engChart() =>
+    [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15] = cycTrack(1)
+    [b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = cycTrack(2)
+    [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15] = cycTrack(3)
+    [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, ta.atr(14)]
+
+// SMT inputs per index (NV values): [prev high, prev low, cur key, cur high, cur low, cur high time, cur low time,
+// cur start, time the prev high was taken, time the prev low was taken]
+NV = 10
+eng90() =>
+    [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15] = cycTrack(0)
+    array.from(a1, a2, float(a6), a9, a10, float(a12), float(a13), float(a7), float(a14), float(a15))
+
+engDW() =>
+    [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15] = cycTrack(1)
+    [b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = cycTrack(2)
+    array.from(a1, a2, float(a6), a9, a10, float(a12), float(a13), float(a7), float(a14), float(a15), b1, b2, float(b6), b9, b10, float(b12), float(b13), float(b7), float(b14), float(b15))
+
+// The last n CLOSED bars packed as [high, low, close, time, atr] × n (the SMT works on closed candles only)
+pack(int n) =>
+    var array<float> a = array.new<float>()
+    float atrNow = ta.atr(14)
+    if bar_index > 0
+        int sz = array.size(a)
+        if sz == 0 or array.get(a, sz - 2) != time[1]
+            array.push(a, high[1])
+            array.push(a, low[1])
+            array.push(a, close[1])
+            array.push(a, time[1])
+            array.push(a, atrNow[1])
+            if array.size(a) > n * 5
+                for j = 1 to 5
+                    array.shift(a)
+    a
+
+// ───────────────────────────── Drawing helpers (everything is redrawn on the last bar)
+var array<line> gLines = array.new<line>()
+var array<label> gLabels = array.new<label>()
+var array<box> gBoxes = array.new<box>()
+var table panel = table.new(PANEL_POS, 1, 7, bgcolor = color.new(chart.bg_color, 10), border_width = 0)
+
+fmt(float p) => str.tostring(p, format.mintick)
+hm(int t) => str.format_time(t, "HH:mm", NYZ)
+
+ln(int t1, float p1, int t2, float p2, color c, int w, string st, bool ext) =>
+    array.push(gLines, line.new(t1, p1, t2, p2, xloc.bar_time, ext ? extend.right : extend.none, c, st, w))
+
+// anchor "above" = text sits above the point, "below" = under it (both start at the point and run right), "right" = right of it
+txt(int t, float p, string s, color c, string anchor, bool bold) =>
+    string st = anchor == "above" ? label.style_label_lower_left : anchor == "below" ? label.style_label_upper_left : label.style_label_left
+    array.push(gLabels, label.new(t, p, s, xloc.bar_time, yloc.price, NONE, st, c, TXT, text.align_left, text_formatting = bold ? text.format_bold : text.format_none))
+
+bx(int t0, float hi, int t1, float lo, color border, color fill, string st) =>
+    array.push(gBoxes, box.new(t0, hi, t1, lo, border, 1, st, extend.none, xloc.bar_time, fill))
+
+clearAll() =>
+    for x in gLines
+        line.delete(x)
+    for x in gLabels
+        label.delete(x)
+    for x in gBoxes
+        box.delete(x)
+    array.clear(gLines)
+    array.clear(gLabels)
+    array.clear(gBoxes)
+
+// ───────────────────────────── Session and 90-minute windows from the chart's own candles
+type Rec
+    int w
+    int td
+    int t0
+    int t1
+    float hi
+    float lo
+    int hiT
+    int loT
+    float o
+    float c
+    int tkH = na
+    int tkL = na
+
+method upd(Rec r) =>
+    if high > r.hi
+        r.hi := high
+        r.hiT := time
+    if low < r.lo
+        r.lo := low
+        r.loT := time
+    r.c := close
+
+sessColor(int w) => w == 0 ? #4F8DFF : w == 1 ? #FF8A3D : #2EC27E
+sessName(int w) => w == 0 ? "ASIA" : w == 1 ? "LONDON" : "NEW YORK"
+sessOn(int w) => w == 0 ? sAsia : w == 1 ? sLondon : sNY
+winColor(int i) => i == 0 ? #9B7BFF : i == 1 ? #F5B84A : i == 2 ? #2BD4A4 : i == 3 ? #8A97A8 : i == 4 ? #5AA9FF : #FF7A9A
+
+sessBounds(int w, int td) =>
+    int a = w == 0 ? dayAt(td, -1, 20, 0) : w == 1 ? dayAt(td, 0, 2, 0) : dayAt(td, 0, 9, 30)
+    int b = w == 0 ? (sessStyle == "Continuous" ? dayAt(td, 0, 2, 0) : td) : w == 1 ? dayAt(td, 0, 5, 0) : dayAt(td, 0, 11, 30)
+    [a, b]
+
+var array<Rec> sessRecs = array.new<Rec>()
+var array<Rec> lastByW = array.new<Rec>(3)
+var array<Rec> winRecs = array.new<Rec>()
+var float midO = na
+var int midTd = na
+
+int tdBar = tradingDay(time)
+int barMs = tfSec * 1000
+
+if tfSec <= 3600
+    for w = 0 to 2
+        [wa, wb] = sessBounds(w, tdBar)
+        if time < wb and time + barMs > wa
+            Rec cur = array.get(lastByW, w)
+            if na(cur) or cur.td != tdBar
+                cur := Rec.new(w, tdBar, wa, wb, high, low, time, time, open, close)
+                array.push(sessRecs, cur)
+                array.set(lastByW, w, cur)
+                if array.size(sessRecs) > 24
+                    array.shift(sessRecs)
+            else
+                cur.upd()
+    for r in sessRecs
+        if time >= r.t1
+            if na(r.tkH) and high > r.hi
+                r.tkH := time
+            if na(r.tkL) and low < r.lo
+                r.tkL := time
+    if time >= tdBar and time - tdBar < 30 * MINUTE and (na(midTd) or midTd != tdBar)
+        midO := open
+        midTd := tdBar
+
+if tfSec <= 1800
+    int nyMin = hour(time, NYZ) * 60 + minute(time, NYZ)
+    if nyMidnight(time) == tdBar and nyMin >= 420 and nyMin < 960
+        int wi = int(math.floor((nyMin - 420) / 90))
+        int sm = 420 + 90 * wi
+        int ws = dayAt(tdBar, 0, int(math.floor(sm / 60)), sm % 60)
+        Rec lastW = array.size(winRecs) > 0 ? array.last(winRecs) : na
+        if not na(lastW) and lastW.td != tdBar
+            array.clear(winRecs)
+            lastW := na
+        if na(lastW) or lastW.w != wi
+            array.push(winRecs, Rec.new(wi, tdBar, ws, ws + 90 * MINUTE, high, low, time, time, open, close))
+        else
+            lastW.upd()
+
+// ───────────────────────────── Day / week / month cycles (H1 data, like the scanner) and level sweeps
+[dPH, dPL, dPS, dPE, dPF, dCK, dCS, dCE, dCH, dCL, dCF, wPH, wPL, wPS, wPE, wPF, wCK, wCS, wCE, wCH, wCL, wCF, mPH, mPL, mPS, mPE, mPF, mCK, mCS, mCE, mCH, mCL, mCF, atrH1] = request.security(syminfo.tickerid, "60", engChart(), calc_bars_count = 3000)
+[nPH, nPL, nPS, nPE, nPF, nCK, nCS, nCE, nCH, nCL, nCF, nCHT, nCLT, nTH, nTL] = cycTrack(0)
+float atrChart = ta.atr(14)
+
+// first candle that took the previous day's / week's high or low after that cycle closed
+var int pdhT = na
+var int pdlT = na
+var int pwhT = na
+var int pwlT = na
+if na(dPS[1]) or dPS != dPS[1]
+    pdhT := na
+    pdlT := na
+if na(wPS[1]) or wPS != wPS[1]
+    pwhT := na
+    pwlT := na
+if not na(dPH) and not na(dPE) and time >= dPE
+    if na(pdhT) and high > dPH
+        pdhT := time
+    if na(pdlT) and low < dPL
+        pdlT := time
+if not na(wPH) and not na(wPE) and time >= wPE
+    if na(pwhT) and high > wPH
+        pwhT := time
+    if na(pwlT) and low < wPL
+        pwlT := time
+
+isLive(int kind, int cK, int nowT) =>
+    [nk, ns, ne] = cycleOf(kind, nowT)
+    not na(nk) and not na(cK) and nk == cK
+
+// SMTs already seen (varip: kept across realtime ticks) — the first pass only records them so adding an alert does not fire
+// one for every SMT that already exists
+varip string alerted = ""
+varip bool alertsPrimed = false
+
+// ───────────────────────────── Levels (draw_levels.plan_levels)
+allowTag(string tag) =>
+    bool tierOk = tier == 4 ? (tag == "PW" or tag == "PD") : tier == 5 ? tag == "PW" : true
+    bool boxed = doSess and ((tag == "Asia" and sAsia) or (tag == "London" and sLondon) or (tag == "NY AM" and sNY))
+    tierOk and not boxed
+
+lvl(string name, string tag, bool isHigh, float price, int formed, int taken, color c, int lastT, float pad) =>
+    if not na(price) and not na(formed)
+        string lab = name + " " + fmt(price)
+        if na(taken)
+            ln(formed, price, lastT, price, c, 2, (tag == "PW" or tag == "PD") ? line.style_solid : line.style_dashed, true)
+        else
+            ln(formed, price, taken, price, c, 1, line.style_dotted, false)
+            lab += " swept " + hm(taken)
+        txt(formed, isHigh ? price + pad : price - pad, lab, c, isHigh ? "above" : "below", false)
+
+// ───────────────────────────── SMT (engine/smt.py): cycle SMT (90-min / day / week) + swing SMT (5m / 15m / 1H)
+type Ser
+    array<float> a
+    int n
+
+type Ev
+    int src
+    int tf
+    string name
+    int weight
+    bool bear
+    int t
+    string per
+    string lag
+    int status
+    float p1
+    int t1
+    float p2
+    int t2
+    string lab
+    string lead = ""
+    int t0 = na
+symName(int i) => i == 0 ? "NAS100" : i == 1 ? "US30" : "US500"
+
+newSer(array<float> a) => na(a) ? Ser.new(na, 0) : Ser.new(a, int(math.floor(array.size(a) / 5)))
+bh(Ser s, int i) => array.get(s.a, i * 5)
+bl(Ser s, int i) => array.get(s.a, i * 5 + 1)
+bc(Ser s, int i) => array.get(s.a, i * 5 + 2)
+bt(Ser s, int i) => int(array.get(s.a, i * 5 + 3))
+batr(Ser s, int i) => array.get(s.a, i * 5 + 4)
+
+// first index whose time is >= t (strict = false) or > t (strict = true)
+bound(Ser s, int t, bool strict) =>
+    int lo = 0
+    int hi = s.n
+    while lo < hi
+        int mid = int(math.floor((lo + hi) / 2))
+        if strict ? bt(s, mid) <= t : bt(s, mid) < t
+            lo := mid + 1
+        else
+            hi := mid
+    lo
+
+// extreme (price, time) of the bars within ±k bars of time t
+nearExt(Ser s, int t, bool isHigh, int k) =>
+    int i = bound(s, t, false)
+    float p = na
+    int pt = na
+    if i < s.n
+        for j = math.max(0, i - k) to math.min(s.n - 1, i + k)
+            float v = isHigh ? bh(s, j) : bl(s, j)
+            if na(p) or (isHigh ? v > p : v < p)
+                p := v
+                pt := bt(s, j)
+    [p, pt]
+
+// opposite extreme between two times (the swing low between two highs, or the swing high between two lows)
+betweenExt(Ser s, int t0, int t1, bool isHigh) =>
+    int a = bound(s, t0, true)
+    int b = bound(s, t1, false)
+    float v = na
+    if b > a
+        for j = a to b - 1
+            float x = isHigh ? bl(s, j) : bh(s, j)
+            v := na(v) ? x : isHigh ? math.min(v, x) : math.max(v, x)
+    v
+
+atrAt(Ser s, int t) => batr(s, math.max(0, math.min(bound(s, t, false), s.n - 1)))
+
+tfName(int tf) => tf == 0 ? "5m" : tf == 1 ? "15m" : tf == 2 ? "1H" : tf == 10 ? "90-min" : tf == 11 ? "Day" : "Week"
+tfWeight(int tf) => tf == 0 ? 1 : tf == 1 ? 2 : tf == 2 ? 3 : tf == 10 ? 3 : tf == 11 ? 4 : 5
+
+insertByT(array<Ev> arr, Ev e) =>
+    int pos = array.size(arr)
+    if pos > 0
+        for j = 0 to array.size(arr) - 1
+            if e.t > array.get(arr, j).t
+                pos := j
+                break
+    array.insert(arr, pos, e)
+
+// one pair of consecutive swings of the leader, compared on every index: an SMT event or na
+pairEval(array<Ser> ser, array<int> syms, int tA, int tB, bool isHigh, int k, int chartI, int tfMs, int tf) =>
+    bool good = true
+    string per = ""
+    string held = ""
+    string lead = ""
+    int nTook = 0
+    int nHeld = 0
+    float cp1 = na
+    int ct1 = na
+    float cp2 = na
+    int ct2 = na
+    string clab = ""
+    int tLast = 0
+    array<float> sp1 = array.new<float>(3, na)
+    array<float> sp2 = array.new<float>(3, na)
+    array<float> smid = array.new<float>(3, na)
+    for s in syms
+        if good
+            Ser S = array.get(ser, s)
+            [qa, qta] = nearExt(S, tA, isHigh, k)
+            [qb, qtb] = nearExt(S, tB, isHigh, k)
+            if na(qa) or na(qb) or qta >= qtb
+                good := false
+            else
+                float mid = betweenExt(S, qta, qtb, isHigh)
+                if na(mid)
+                    good := false
+                else
+                    float d = (qb - qa) * (isHigh ? 1 : -1)
+                    float tol = 0.1 * nz(atrAt(S, qtb))
+                    int bey = d > tol ? 1 : d < -tol ? -1 : 0
+                    if bey == 1
+                        nTook += 1
+                        lead += (lead == "" ? "" : " / ") + symName(s)
+                    if bey == -1
+                        nHeld += 1
+                        held += (held == "" ? "" : " / ") + symName(s)
+                    string lab = isHigh ? (bey == 0 ? "EQH" : bey == 1 ? "HH" : "LH") : (bey == 0 ? "EQL" : bey == 1 ? "LL" : "HL")
+                    per += (per == "" ? "" : " · ") + symName(s) + " " + lab
+                    if s == chartI
+                        cp1 := qa
+                        ct1 := qta
+                        cp2 := qb
+                        ct2 := qtb
+                        clab := lab
+                    tLast := math.max(tLast, qtb)
+                    array.set(sp1, s, qa)
+                    array.set(sp2, s, qb)
+                    array.set(smid, s, mid)
+    Ev ev = na
+    if good and nTook > 0 and nHeld > 0
+        // watch / confirmed (a close through the swing between the two points) / cancelled (every index made a new extreme)
+        int firstConf = na
+        bool allBeyond = true
+        int cancelT = 0
+        for s in syms
+            Ser S2 = array.get(ser, s)
+            float ext = isHigh ? math.max(array.get(sp1, s), array.get(sp2, s)) : math.min(array.get(sp1, s), array.get(sp2, s))
+            float mid2 = array.get(smid, s)
+            int st = bound(S2, tLast, true)
+            int mss = na
+            int beyT = na
+            if st < S2.n
+                for j = st to S2.n - 1
+                    if na(mss) and (isHigh ? bc(S2, j) < mid2 : bc(S2, j) > mid2)
+                        mss := bt(S2, j) + tfMs
+                    if na(beyT) and (isHigh ? bh(S2, j) > ext : bl(S2, j) < ext)
+                        beyT := bt(S2, j) + tfMs
+            if not na(mss) and (na(firstConf) or mss < firstConf)
+                firstConf := mss
+            if na(beyT)
+                allBeyond := false
+            else
+                cancelT := math.max(cancelT, beyT)
+        int status = not na(firstConf) and (not allBeyond or firstConf < cancelT) ? 1 : allBeyond ? 2 : 0
+        ev := Ev.new(1, tf, tfName(tf), tfWeight(tf), isHigh, tB, per, held, status, cp1, ct1, cp2, ct2, clab, lead)
+    ev
+
+swingSmt(array<Ser> ser, array<int> syms, int tf, int tfMs, int lookMs, int nowT, int chartI, array<Ev> out) =>
+    array<Ev> found = array.new<Ev>()
+    int k = 2
+    bool ok = array.size(syms) >= 2
+    for s in syms
+        Ser x = array.get(ser, s)
+        if na(x) or x.n < 20
+            ok := false
+    if ok
+        for leader in syms
+            Ser L = array.get(ser, leader)
+            for sideI = 0 to 1
+                bool isHigh = sideI == 0
+                int prevSw = -1
+                for i = 2 to L.n - 3
+                    float v = isHigh ? bh(L, i) : bl(L, i)
+                    bool isSw = true
+                    for j = i - 2 to i + 2
+                        if j != i and (isHigh ? v <= bh(L, j) : v >= bl(L, j))
+                            isSw := false
+                    if isSw
+                        if prevSw >= 0 and bt(L, i) >= nowT - lookMs and i - prevSw >= 2 * k + 2
+                            int tB = bt(L, i)
+                            bool dup = false
+                            for e in found
+                                if e.bear == isHigh and math.abs(e.t - tB) <= tfMs * k
+                                    dup := true
+                            if not dup
+                                Ev ev = pairEval(ser, syms, bt(L, prevSw), tB, isHigh, k, chartI, tfMs, tf)
+                                if not na(ev)
+                                    array.push(found, ev)
+                        prevSw := i
+        for side = 0 to 1
+            array<Ev> pick = array.new<Ev>()
+            for e in found
+                if e.bear == (side == 0)
+                    insertByT(pick, e)
+            int keep = math.min(2, array.size(pick))
+            if keep > 0
+                for j = 0 to keep - 1
+                    array.push(out, array.get(pick, j))
+
+// cycle SMT for one kind: v holds NV values per index (see eng90). Every index that is in the comparison either took the
+// previous cycle's high (low) in the current cycle or did not; some did and some did not = SMT, live from the first tick.
+// p1/t0/t1 = this chart's level, cycle start and the time it took the level; p2/t2 = this chart's own high (low) so far.
+cycleSmt(int kind, int tf, array<float> v, array<int> syms, int nowT, int chartI, array<Ev> out) =>
+    bool ok = array.size(syms) >= 2
+    float key = na
+    for s in syms
+        int b = s * NV
+        if na(array.get(v, b)) or na(array.get(v, b + 2))
+            ok := false
+        else if na(key)
+            key := array.get(v, b + 2)
+        else if array.get(v, b + 2) != key
+            ok := false
+    if ok
+        [nk, ns, ne] = cycleOf(kind, nowT)
+        if not na(nk) and nk == key
+            for side = 0 to 1
+                bool bear = side == 0
+                string per = ""
+                string held = ""
+                string lead = ""
+                int nTook = 0
+                int nHeld = 0
+                int t = 0
+                bool chartTook = false
+                for s in syms
+                    int b = s * NV
+                    bool took = bear ? array.get(v, b + 3) > array.get(v, b) : array.get(v, b + 4) < array.get(v, b + 1)
+                    per += (per == "" ? "" : " · ") + symName(s) + (took ? " ✓" : " ✗")
+                    if took
+                        nTook += 1
+                        lead += (lead == "" ? "" : " / ") + symName(s)
+                        t := math.max(t, int(array.get(v, b + (bear ? 5 : 6))))
+                        if s == chartI
+                            chartTook := true
+                    else
+                        nHeld += 1
+                        held += (held == "" ? "" : " / ") + symName(s)
+                if nTook > 0 and nHeld > 0
+                    int c = chartI * NV
+                    float lvlP = array.get(v, c + (bear ? 0 : 1))
+                    int tookT = int(array.get(v, c + (bear ? 8 : 9)))
+                    float extP = array.get(v, c + (bear ? 3 : 4))
+                    int extT = int(array.get(v, c + (bear ? 5 : 6)))
+                    array.push(out, Ev.new(0, tf, tfName(tf), tfWeight(tf), bear, t, per, held, 0, lvlP, chartTook ? tookT : na, extP, extT, chartTook ? "took" : "held", lead, int(array.get(v, c + 7))))
+
+// all requests for one index (only run on the last bar)
+fetch(int i, string sym, array<float> v90, array<float> vD, array<float> vW, array<Ser> s5, array<Ser> s15, array<Ser> s60) =>
+    array<float> e90 = request.security(sym, "5", eng90(), ignore_invalid_symbol = true, calc_bars_count = 600)
+    array<float> eDW = request.security(sym, "60", engDW(), ignore_invalid_symbol = true, calc_bars_count = 800)
+    array<float> r5 = request.security(sym, "5", pack(120), ignore_invalid_symbol = true, calc_bars_count = 400)
+    array<float> r15 = request.security(sym, "15", pack(140), ignore_invalid_symbol = true, calc_bars_count = 400)
+    array<float> r60 = request.security(sym, "60", pack(120), ignore_invalid_symbol = true, calc_bars_count = 400)
+    int o = i * NV
+    for j = 0 to NV - 1
+        array.set(v90, o + j, na(e90) ? na : array.get(e90, j))
+        array.set(vD, o + j, na(eDW) ? na : array.get(eDW, j))
+        array.set(vW, o + j, na(eDW) ? na : array.get(eDW, NV + j))
+    array.set(s5, i, newSer(r5))
+    array.set(s15, i, newSer(r15))
+    array.set(s60, i, newSer(r60))
+
+chartIndex() =>
+    string t = str.upper(syminfo.ticker)
+    bool isNQ = str.contains(t, "NAS") or str.contains(t, "US100") or str.contains(t, "USTEC") or str.contains(t, "NDX") or str.startswith(t, "NQ")
+    bool isYM = str.contains(t, "US30") or str.contains(t, "DJ") or str.contains(t, "WS30") or str.startswith(t, "YM")
+    bool isES = str.contains(t, "US500") or str.contains(t, "SPX") or str.contains(t, "SP500") or str.startswith(t, "ES")
+    string id = ticker.standard(syminfo.tickerid)
+    id == symNQ ? 0 : id == symYM ? 1 : id == symES ? 2 : isNQ ? 0 : isYM ? 1 : isES ? 2 : -1
+
+// ───────────────────────────── Draw everything on the last bar
+if barstate.islast
+    clearAll()
+    table.clear(panel, 0, 0, 0, 6)
+    int nowT = timenow
+    int lastT = time
+    float atr = na(atrH1) ? atrChart : atrH1
+    int tdNow = tradingDay(nowT)
+
+    // key levels
+    if doLevels
+        float lpad = atr * 0.12
+        if allowTag("PW")
+            bool wl = isLive(2, wCK, nowT)
+            lvl("PWH", "PW", true, wl ? wPH : wCH, wl ? wPF : wCF, wl ? pwhT : na, COL_PW, lastT, lpad)
+            lvl("PWL", "PW", false, wl ? wPL : wCL, wl ? wPF : wCF, wl ? pwlT : na, COL_PW, lastT, lpad)
+        if allowTag("PD")
+            bool dl = isLive(1, dCK, nowT)
+            lvl("PDH", "PD", true, dl ? dPH : dCH, dl ? dPF : dCF, dl ? pdhT : na, chart.fg_color, lastT, lpad)
+            lvl("PDL", "PD", false, dl ? dPL : dCL, dl ? dPF : dCF, dl ? pdlT : na, chart.fg_color, lastT, lpad)
+        for r in sessRecs
+            string tag = r.w == 0 ? "Asia" : r.w == 1 ? "London" : "NY AM"
+            if r.td == tdNow and allowTag(tag)
+                bool formingL = nowT < r.t1
+                color lc = r.w == 0 ? COL_ASIA_LV : r.w == 1 ? COL_LON_LV : COL_NY_LV
+                lvl(tag + " H", tag, true, r.hi, r.hiT, formingL ? na : r.tkH, lc, lastT, lpad)
+                lvl(tag + " L", tag, false, r.lo, r.loT, formingL ? na : r.tkL, lc, lastT, lpad)
+        if allowTag("open") and not na(midO) and midTd == tdNow and nowT > tdNow
+            ln(tdNow, midO, lastT, midO, COL_OPEN, 1, line.style_dotted, true)
+            txt(tdNow, midO - lpad, "Midnight open " + fmt(midO), COL_OPEN, "below", false)
+
+    // session boxes of the last `sessDays` trading days
+    if doSess
+        float pad = atr * 0.03
+        float rowGap = atr * 0.3
+        array<int> tds = array.new<int>()
+        if array.size(sessRecs) > 0
+            for j = array.size(sessRecs) - 1 to 0
+                Rec r = array.get(sessRecs, j)
+                if sessOn(r.w) and r.t0 < nowT and not array.includes(tds, r.td)
+                    array.push(tds, r.td)
+        int nd = math.min(sessDays, array.size(tds))
+        if nd > 0
+            for d = 0 to nd - 1
+                bool latest = d == 0
+                for r in sessRecs
+                    if r.td == array.get(tds, d) and sessOn(r.w)
+                        color base = sessColor(r.w)
+                        bool forming = nowT < r.t1
+                        bx(r.t0, r.hi, r.t1, r.lo, color.new(base, latest ? 40 : 60), color.new(base, latest ? 88 : 91), forming ? line.style_dashed : line.style_solid)
+                        string nh = ""
+                        string nl = ""
+                        string oc = ""
+                        if latest
+                            if not compact
+                                int tick = int((r.t1 - r.t0) * 0.16)
+                                ln(r.t0, r.o, r.t0 + tick, r.o, base, 3, line.style_solid, false)
+                                if not forming
+                                    ln(r.t1 - tick, r.c, r.t1, r.c, base, 3, line.style_solid, false)
+                                oc := "O " + fmt(r.o) + (forming ? "" : " → C " + fmt(r.c))
+                            if not forming
+                                nh := na(r.tkH) ? "" : "  · swept " + hm(r.tkH)
+                                nl := na(r.tkL) ? "" : "  · swept " + hm(r.tkL)
+                                ln(r.t1, r.hi, na(r.tkH) ? lastT : r.tkH, r.hi, color.new(base, 30), 1, line.style_dotted, false)
+                                ln(r.t1, r.lo, na(r.tkL) ? lastT : r.tkL, r.lo, color.new(base, 30), 1, line.style_dotted, false)
+                        float rowOff = (r.w % 2) * rowGap
+                        color tc = latest ? base : color.new(base, 30)
+                        txt(r.t0, r.hi + pad + rowOff, sessName(r.w) + "  H " + fmt(r.hi) + nh, tc, "above", true)
+                        txt(r.t0, r.lo - pad - rowOff, "L " + fmt(r.lo) + nl + (oc != "" ? "   ·   " + oc : ""), tc, "below", false)
+
+    // 90-minute windows of the latest day
+    if doBoxes
+        float pad2 = atr * 0.03
+        float rowGap2 = atr * 0.3
+        for r in winRecs
+            color base2 = winColor(r.w)
+            bool forming2 = r.t1 > nowT
+            bx(r.t0, r.hi, r.t1, r.lo, color.new(base2, 30), color.new(base2, 85), forming2 ? line.style_dashed : line.style_solid)
+            int tick2 = int((r.t1 - r.t0) * 0.16)
+            ln(r.t0, r.o, r.t0 + tick2, r.o, base2, 3, line.style_solid, false)
+            if not forming2
+                ln(r.t1 - tick2, r.c, r.t1, r.c, base2, 3, line.style_solid, false)
+            string oc2 = "O " + fmt(r.o) + (forming2 ? "" : " → C " + fmt(r.c))
+            float rowOff2 = (r.w % 2) * rowGap2
+            txt(r.t0, r.hi + pad2 + rowOff2, hm(r.t0) + "  H " + fmt(r.hi) + (forming2 ? " …" : ""), base2, "above", false)
+            txt(r.t0, r.lo - pad2 - rowOff2, "L " + fmt(r.lo) + " · " + oc2, base2, "below", false)
+
+    // previous-cycle PXH / EQ / PXL across the current cycle, one merged label per price right of the last candle
+    if doCyc
+        array<float> labP = array.new<float>()
+        array<bool> labHigh = array.new<bool>()
+        array<string> labTags = array.new<string>()
+        array<color> labCol = array.new<color>()
+        for kind = 3 to 0
+            bool kindOn = kind == 3 ? kMonth : kind == 2 ? kWeek : kind == 1 ? kDay : k90
+            int cK = kind == 3 ? mCK : kind == 2 ? wCK : kind == 1 ? dCK : nCK
+            if kindOn and not na(cK)
+                bool live = isLive(kind, cK, nowT)
+                float H = kind == 3 ? (live ? mPH : mCH) : kind == 2 ? (live ? wPH : wCH) : kind == 1 ? (live ? dPH : dCH) : (live ? nPH : nCH)
+                float L = kind == 3 ? (live ? mPL : mCL) : kind == 2 ? (live ? wPL : wCL) : kind == 1 ? (live ? dPL : dCL) : (live ? nPL : nCL)
+                int s0 = kind == 3 ? mCS : kind == 2 ? wCS : kind == 1 ? dCS : nCS
+                int s1 = kind == 3 ? mCE : kind == 2 ? wCE : kind == 1 ? dCE : nCE
+                color kc = kind == 3 ? chart.fg_color : kind == 2 ? #B388FF : kind == 1 ? #5AA9FF : #F5B84A
+                string short = kind == 3 ? "M" : kind == 2 ? "W" : kind == 1 ? "D" : "90m"
+                if not na(H) and not na(L)
+                    ln(s0, H, s1, H, kc, 2, line.style_solid, false)
+                    ln(s0, L, s1, L, kc, 2, line.style_solid, false)
+                    ln(s0, (H + L) / 2, s1, (H + L) / 2, kc, 1, line.style_dotted, false)
+                    for side = 0 to 1
+                        float p = side == 0 ? H : L
+                        int hit = -1
+                        if array.size(labP) > 0
+                            for j = 0 to array.size(labP) - 1
+                                if array.get(labP, j) == p and array.get(labHigh, j) == (side == 0)
+                                    hit := j
+                        if hit >= 0
+                            array.set(labTags, hit, array.get(labTags, hit) + " · " + short)
+                        else
+                            array.push(labP, p)
+                            array.push(labHigh, side == 0)
+                            array.push(labTags, short)
+                            array.push(labCol, kc)
+        // stack the labels so they never overlap: at least 0.3 × H1 ATR apart, highs nudged up, lows down
+        int nLab = array.size(labP)
+        if nLab > 0
+            array<int> idx = array.sort_indices(labP, order.descending)
+            float lastY = na
+            int xr = lastT + 3 * barMs
+            for j = 0 to nLab - 1
+                int q = array.get(idx, j)
+                bool hiSide = array.get(labHigh, q)
+                float lp = array.get(labP, q)
+                float y = lp + (hiSide ? atr * 0.08 : -atr * 0.08)
+                if not na(lastY) and lastY - y < atr * 0.3
+                    y := lastY - atr * 0.3
+                lastY := y
+                txt(xr, y, array.get(labTags, q) + (hiSide ? " PXH " : " PXL ") + fmt(lp), array.get(labCol, q), "right", false)
+
+    // SMT panel and the timing SMT's line on this index
+    if doSmt
+        array<int> syms = smtPair == "NAS100 vs US500" ? array.from(0, 2) : smtPair == "NAS100 vs US30" ? array.from(0, 1) : smtPair == "US500 vs US30" ? array.from(1, 2) : array.from(0, 1, 2)
+        string pairTxt = ""
+        for s in syms
+            pairTxt += (pairTxt == "" ? "" : " vs ") + symName(s)
+        int chartI = chartIndex()
+        array<string> rows = array.new<string>()
+        array<color> rowCol = array.new<color>()
+        array<bool> rowBold = array.new<bool>()
+        if not array.includes(syms, chartI)
+            array.push(rows, "SMT (" + pairTxt + ") · " + syminfo.ticker + " is not in this comparison")
+            array.push(rowCol, DIM)
+            array.push(rowBold, false)
+        else
+            array<float> v90 = array.new<float>(3 * NV, na)
+            array<float> vD = array.new<float>(3 * NV, na)
+            array<float> vW = array.new<float>(3 * NV, na)
+            array<Ser> s5 = array.new<Ser>(3)
+            array<Ser> s15 = array.new<Ser>(3)
+            array<Ser> s60 = array.new<Ser>(3)
+            if array.includes(syms, 0)
+                fetch(0, symNQ, v90, vD, vW, s5, s15, s60)
+            if array.includes(syms, 1)
+                fetch(1, symYM, v90, vD, vW, s5, s15, s60)
+            if array.includes(syms, 2)
+                fetch(2, symES, v90, vD, vW, s5, s15, s60)
+            array<Ev> evs = array.new<Ev>()
+            swingSmt(s5, syms, 0, 5 * MINUTE, 6 * HOUR, nowT, chartI, evs)
+            swingSmt(s15, syms, 1, 15 * MINUTE, 24 * HOUR, nowT, chartI, evs)
+            swingSmt(s60, syms, 2, HOUR, 72 * HOUR, nowT, chartI, evs)
+            cycleSmt(0, 10, v90, syms, nowT, chartI, evs)
+            cycleSmt(1, 11, vD, syms, nowT, chartI, evs)
+            cycleSmt(2, 12, vW, syms, nowT, chartI, evs)
+            // mark every live cycle SMT on this chart at the level where it formed: the candle that took the PXH/PXL when this
+            // index took it, or this index's own high/low (the one that failed to take it) when it did not
+            if smtMarks
+                array<int> usedT = array.new<int>()
+                for e in evs
+                    if e.src == 0 and not na(e.p1)
+                        bool fits90 = e.tf != 10 or tier == 0 or tier <= 2
+                        bool fitsDay = e.tf != 11 or tier == 0 or tier <= 4
+                        if fits90 and fitsDay
+                            color mc = e.bear ? COL_BEAR : COL_BULL
+                            string lvlName = e.name + (e.bear ? " PXH" : " PXL")
+                            bool took = e.lab == "took"
+                            // the moment this chart's own candles took the level (finer than the 5m / 1H request data)
+                            int chartTook = e.tf == 11 ? (e.bear ? pdhT : pdlT) : e.tf == 12 ? (e.bear ? pwhT : pwlT) : (tfSec <= 1800 and isLive(0, nCK, nowT) ? (e.bear ? nTH : nTL) : na)
+                            int mt = took ? (na(chartTook) ? e.t1 : chartTook) : e.t2
+                            float mp = took ? e.p1 : e.p2
+                            if not na(mt) and not na(mp)
+                                int stack = 0
+                                for u in usedT
+                                    if u == mt
+                                        stack += 1
+                                array.push(usedT, mt)
+                                float off = (atr * 0.05 + stack * atr * 0.45) * (e.bear ? 1 : -1)
+                                if not na(e.t0)
+                                    ln(e.t0, e.p1, lastT, e.p1, color.new(mc, 20), 2, line.style_dashed, false)
+                                string mtxt = "SMT " + (e.bear ? "▼ " : "▲ ") + lvlName + (took ? " taken · " + e.lag + " did not" : " not taken · " + e.lead + " took it")
+                                array.push(gLabels, label.new(mt, mp + off, mtxt, xloc.bar_time, yloc.price, color.new(mc, 15), e.bear ? label.style_label_down : label.style_label_up, color.white, TXT, text.align_center, text_formatting = text.format_bold))
+            // ranked: strongest timeframe first, newest first; absorbed (cancelled) swing SMTs dropped
+            array<Ev> rk = array.new<Ev>()
+            for e in evs
+                if e.status != 2
+                    int pos = array.size(rk)
+                    if pos > 0
+                        for j = 0 to array.size(rk) - 1
+                            Ev o = array.get(rk, j)
+                            if e.weight > o.weight or (e.weight == o.weight and e.t > o.t)
+                                pos := j
+                                break
+                    array.insert(rk, pos, e)
+            // alert once per new SMT (cycle SMTs and live 5m / 15m / 1H swing SMTs); create a TradingView alert on this
+            // indicator with "Any alert() function call" to receive them
+            for e in rk
+                string akey = str.tostring(e.src) + "|" + str.tostring(e.tf) + "|" + (e.bear ? "B" : "S") + "|" + str.tostring(e.src == 0 ? e.t0 : e.t) + ";"
+                if not str.contains(alerted, akey)
+                    alerted += akey
+                    string what = e.src == 0 ? e.lead + " took the " + e.name + (e.bear ? " PXH, " : " PXL, ") + e.lag + " did not" : e.name + " swing: " + e.per
+                    if alertsPrimed
+                        alert(syminfo.ticker + " · " + (e.bear ? "BEARISH" : "BULLISH") + " " + e.name + " SMT · " + what + " (" + hm(nowT) + " NY)", alert.freq_all)
+            alertsPrimed := barstate.isrealtime
+            if str.length(alerted) > 3000
+                alerted := str.substring(alerted, str.length(alerted) - 1500)
+            Ev bias = na
+            for e in rk
+                if na(bias) and e.weight >= 3
+                    bias := e
+            if na(bias)
+                string allNames = ""
+                for s in syms
+                    allNames += (allNames == "" ? "" : " / ") + symName(s)
+                array.push(rows, "SMT · no divergence between " + allNames)
+                array.push(rowCol, DIM)
+                array.push(rowBold, false)
+            else
+                Ev trig = na
+                Ev against = na
+                for e in rk
+                    if e.src == 1 and (e.tf == 0 or e.tf == 1) and e.bear == bias.bear and e.t >= bias.t and (na(trig) or e.t > trig.t)
+                        trig := e
+                    if na(against) and e.bear != bias.bear and e.weight >= 3
+                        against := e
+                bool bear = bias.bear
+                color col = bear ? COL_BEAR : COL_BULL
+                array.push(rows, (bear ? "▼ BEARISH" : "▲ BULLISH") + " SMT  ·  divergence at the " + (bear ? "highs" : "lows") + (array.size(syms) == 2 ? "  ·  " + pairTxt : ""))
+                array.push(rowCol, col)
+                array.push(rowBold, true)
+                array.push(rows, bias.name + (bias.src == 0 ? " cycle" : " swing") + ":  " + bias.per + (bias.src == 0 ? (bear ? "   (took PXH)" : "   (took PXL)") : ""))
+                array.push(rowCol, chart.fg_color)
+                array.push(rowBold, false)
+                if not na(trig)
+                    array.push(rows, trig.name + " trigger " + hm(trig.t) + ":  " + trig.per)
+                    array.push(rowCol, chart.fg_color)
+                else
+                    array.push(rows, "5m / 15m trigger:  waiting")
+                    array.push(rowCol, DIM)
+                array.push(rowBold, false)
+                // the index to trade comes from the 5m/15m trigger when there is one (the most recent read)
+                string target = na(trig) ? bias.lag + "  (after a 5m SMT)" : trig.lag + (trig.lag != bias.lag ? "   (" + bias.name + ": " + bias.lag + ")" : "")
+                array.push(rows, "→ " + (bear ? "sell the weaker" : "buy the stronger") + ":  " + target)
+                array.push(rowCol, col)
+                array.push(rowBold, true)
+                if not na(against)
+                    array.push(rows, "⚠ " + against.name + " SMT points " + (against.bear ? "down" : "up"))
+                    array.push(rowCol, COL_WARN)
+                    array.push(rowBold, false)
+                if not na(trig) and not na(trig.p1) and not na(trig.t1)
+                    color tcol = trig.bear ? COL_BEAR : COL_BULL
+                    ln(trig.t1, trig.p1, trig.t2, trig.p2, tcol, 2, line.style_solid, false)
+                    txt(trig.t2, trig.p2 + (trig.bear ? atr * 0.03 : -atr * 0.03), "SMT " + (trig.bear ? "▼ " : "▲ ") + trig.lab, tcol, trig.bear ? "above" : "below", true)
+        for j = 0 to array.size(rows) - 1
+            table.cell(panel, 0, j, array.get(rows, j), text_color = array.get(rowCol, j), text_halign = text.align_left, text_size = TXT, text_formatting = array.get(rowBold, j) ? text.format_bold : text.format_none)
