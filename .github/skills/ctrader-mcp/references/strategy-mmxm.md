@@ -42,6 +42,13 @@ S1–S4 as the user's main model. Where the lecture is discretionary, the mechan
 - Choice of the reversal array by eye; mitigation/breaker blocks; standard-deviation projections; trailing by feel.
 
 ## Status
+- 2026-11-14: **Live tracking fixes + weekly report.** (1) "Late alert" was a misread: the setup id epoch is the
+  confirmation time (`conf_t`) and alerts arrive ~5 min after it; `key_t` is the reversal extreme (`L_t`). (2) Stuck
+  records: when a later scan finds an earlier intermediate high broken for the same reversal low, `detect`'s `used_L`
+  gives the reversal to that one and the announced setup vanished, freezing at limit/triggered (5 records). Now
+  `run(keep=…)` keeps simulating announced setups with their own levels (`superseded`), and open trades older than the
+  7-day look-back are still updated. Records store `mmxm.L` for the invalidation check. (3) `weekly.py` + `/weekly`.
+  Forward record 19 Oct → 13 Nov (first week partly backfilled): swing +62.6R from 4 closed, intraday −21.8R from 55.
 - 2026-10-27: **Minimum stop distance** (user: "increase the stop loss of every setup to 15 to 20 pips"; index pip = 1
   point). `MMXM_DEFAULTS["min_stop_pips"]` = NAS100 15, US30 20, US500 20 (a number applies to all; 0 = old tight stop).
   Backtest, costs included: ALL 541 trades −2.6R → +83.3R, max DD −111R → −60R, win 17.6% → 23.5%; intraday −107.5R →

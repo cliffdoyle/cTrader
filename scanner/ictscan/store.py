@@ -118,7 +118,15 @@ class Store:
         cond, args = cls._filter(grades, symbols, kinds)
         if not cond:
             return "", []
-        return f" AND setup_id IN (SELECT id FROM setups WHERE {' AND '.join(cond)})", args
+        # reports (WEEKLY-…) are not setups and pass every dashboard filter
+        return f" AND (setup_id LIKE 'WEEKLY-%' OR setup_id IN (SELECT id FROM setups WHERE {' AND '.join(cond)}))", args
+
+    def add_notification(self, setup_id, symbol, stage, level, t, title, body):
+        """A notification that is not a setup stage (e.g. the weekly MMXM report); ignored if it already exists."""
+        with self.lock, self._conn() as c:
+            cur = c.execute("""INSERT OR IGNORE INTO notifications (setup_id, symbol, stage, level, t, created, title, body, read)
+                               VALUES (?,?,?,?,?,?,?,?,0)""", (setup_id, symbol, stage, level, t, utcnow().isoformat(), title, body))
+            return cur.rowcount
 
     def notifications(self, after_id=0, limit=100, unread_only=False, grades=None, symbols=None, kinds=None):
         gc, gargs = self._note_cond(grades, symbols, kinds)

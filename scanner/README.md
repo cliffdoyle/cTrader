@@ -73,6 +73,15 @@ swing version with the stop beyond the reversal extreme was the only one positiv
 The dashboard shows only NAS100/US30/US500 and only MMXM signals (`DASHBOARD_SYMBOLS` / `DASHBOARD_SETUPS` in
 `config.py`; set them to `()` to show everything again — all symbols are still scanned).
 
+Live tracking: an announced setup is followed to its outcome even when the detector later prefers a newer swing point for
+the same reversal (`mmxm.run(keep=…)`; the record gets `superseded: true` and a note) and even after the 7-day detection
+look-back (open swing trades run up to 10 days); a setup older than the candles held closes as "No longer tracked".
+**Weekly report** (`weekly.py`): page `/weekly` and `/api/mmxm/weekly?week=YYYY-MM-DD` list every MMXM setup by the
+trading week it was confirmed in (Sun 18:00 → Fri 17:00 NY) with outcome and R, totals per mode and the running forward
+record; after each Friday close the runner posts one notification `WEEKLY-MMXM-<friday>` (meta `mmxm_weekly_sent`).
+**Swing tab** (`/swing`, `/api/swing`): only the MMXM swing setups — live signal cards, the swing record (overall and per
+index) and every closed swing setup with a per-index filter.
+
 ## Time cycles (PXH / PXL)
 `engine/cycles.py` (after Frank369's time-cycle lecture) builds New York-time cycles — month (D1), week (H4), trading day
 (H1) and the six 90-minute windows 07:00–16:00 (M5) — and for the previous cycle gives PXH, PXL, EQ (50 %) and the full

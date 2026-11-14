@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+from . import weekly
 from .config import PARAMS, REFRESH, SCAN_DELAY_SECONDS, SYMBOLS, TIMEFRAMES, WINDOW
 from .data import parse, sync
 from .engine import mmxm
@@ -92,7 +93,8 @@ class Scanner:
                 fresh = self.store.get_meta("mmxm_initialized", False) and \
                     self.store.get_meta("mmxm_rules") == mmxm.RULES_VERSION
                 quiet = quiet_before if fresh else server_now.isoformat()
-                new_notes += self.store.save_setups(live_setups(index_bars, server_now), quiet, offline_since)
+                active = self.store.setups(active_only=True, kinds=["MMXM"], limit=500)
+                new_notes += self.store.save_setups(live_setups(index_bars, server_now, active=active), quiet, offline_since)
                 self.store.set_meta("mmxm_initialized", True)
                 self.store.set_meta("mmxm_rules", mmxm.RULES_VERSION)
             except Exception as e:
@@ -104,6 +106,11 @@ class Scanner:
                 except Exception as e:
                     log.exception("SMT analysis failed (%s)", pair)
                     errors.append(f"SMT {pair}: {e}")
+        try:
+            new_notes += weekly.maybe_notify(self.store, server_now)
+        except Exception as e:
+            log.exception("weekly report failed")
+            errors.append(f"weekly report: {e}")
         self.store.set_meta("initialized", True)
         self.store.set_meta("last_scan", server_now.isoformat())
         dur = round(time.time() - t0, 1)
