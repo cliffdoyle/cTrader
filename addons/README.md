@@ -77,6 +77,27 @@ Differences from the cTrader / MT5 add-ons:
   another has not, the same live marker appears ("SMT ▼ Asia high taken · US500 did not"), the panel can use it as the
   direction SMT (weight of a 90-min cycle) and an alert fires. Computed inside the existing 5m request per index, so it
   costs no extra data request. Markers show up to H1.
+- **Swing-level SMT (instant)** ("SMT at the latest 15m / 1H swing highs and lows", on by default): once a 15m or 1H
+  swing high/low is confirmed it becomes a level on every index (each index's own extreme within ±2 bars of that time).
+  The indicator walks back over the most recent swings; the first one any index has traded through decides — some took
+  it and another clearly did not = SMT, marked on the candle that took it (the forming 15m/1H candle counts, via
+  `packLive`). **Strictness** (default Strict = swing is the extreme of the 10 bars before it and the holding index
+  missed its level by more than 0.25 × ATR; Normal 5 / 0.1; Loose 2 / 0). Replayed on the week to 13 Nov: Strict ≈ 8 per
+  day on 15m and 2–3 per day on 1H (Loose: ~20 and ~7). 1H ones alert; 15m alerts only with "Alert on 15m swing-level
+  SMT". The 15m one can be the panel's 5m/15m trigger, the 1H one its direction SMT. 15m markers show up to M30, 1H up to H1.
+- **Precision SMT (5m / 1m)** ("Precision SMT on 5m / 1m after a level SMT", charts up to M5): after any level SMT
+  (cycle, session or 15m/1H swing level) the indicator watches, in the same direction only, the 5m swings (3-bar swings,
+  0.1 ATR miss) for 2 hours and the 1m swings for 45 minutes, and marks the small SMT at the turn with "⚡" (e.g. "⚡ SMT ▲ 1m
+  low not taken · US500 took it"). It can be the panel's trigger and alerts ("Alert on precision SMT"). Adds one 1m request
+  per index only on charts up to M5. The plain 5m swing SMT stays delayed (a swing needs 2 closed candles after it).
+- **Opening prices** (group "Opening prices"): dotted lines + labels right of the candles for the yearly, monthly and
+  weekly open (all timeframes; W.O solid orange), the daily 18:00 open (≤ H4, off by default) and the 00:00, 08:30 (off by
+  default) and 09:30 opens of the trading day (≤ H1). Y/M/W/D come from daily bars (`engOpens`, TradingView's daily
+  session), the intraday ones from 5m bars (`engIntraOpens`). With the midnight open on, the key-levels "Midnight open"
+  is not drawn twice. **SMT at the opens**: while every index is fully on one side of its own open and has moved at least
+  2 × 5m ATR away from it, one index trading back through its open while another stays short = SMT (all below → bearish,
+  all above → bullish), live on the candle, until every index has traded through. One alert per open, per direction, per
+  day. Replay on the week to 13 Nov: W.O 5, 09:30 open 5, 00:00 open 26 SMT moments (the chart only shows the current one).
 - **Alerts**: right-click the indicator → Add alert → condition "ICT Scanner Levels" → **Any alert() function call**. You
   get one alert per new SMT (cycle SMTs and 5m / 15m / 1H swing SMTs), with the indices that took / did not take the level.
 - A text "row" is a fixed 0.3 × H1 ATR (Pine cannot read the zoom), so at extreme zoom levels neighbouring labels can touch.
@@ -85,6 +106,23 @@ Sharing: the script has no key or scanner address in it, so it can be given to a
 paste it as in step 2), or publish it from the Pine Editor (**Publish script** → **Private**, so it is not listed or
 reviewed) and send the link; they open it and click **Add to favorites**, and later "Update" publications reach them
 automatically.
+
+## TradingView — ICT Dealing Range (separate indicator)
+`tradingview/ICT Dealing Range.pine` draws the **current dealing range** of up to three timeframes (default 4H on, 1H on,
+15m off): range high and low, the dashed **EQ 50%** line, premium (red) / discount (green) shading on Range 1, optional
+**OTE 62 / 70.5 / 79 %** levels, and a status table (bias, range, EQ, where price sits in %, last BOS/CHoCH candle in NY
+time). Install it like step 2 above (new indicator, paste, save as "ICT Dealing Range", add to chart); it can sit next to
+ICT Scanner Levels on the same chart.
+- Rules = the scanner's `engine/core.py` (`structure` + `dealing_range`): N=2 swings, close-based BOS / CHoCH, the range
+  runs from the **protected level** (lowest low / highest high between the broken level and the break candle) to the
+  leg's extreme; it only flips on a close beyond the protected level. A Python replay of the Pine logic matched
+  `core.dealing_range` on every bar of 2,088 NAS100/US500 5m–4H candles.
+- Closed candles only (`request.security` with `[1]` + lookahead on), so nothing repaints; a range timeframe lower than
+  the chart's is skipped ("lower than the chart timeframe").
+- TradingView loads a higher timeframe only back to the chart's first candle, so on a 1m chart the 4H range can show
+  "no structure yet"; use M5 or higher (or scroll back to load more history).
+- Alerts: Add alert → "ICT Dealing Range" → **Any alert() function call**: a new BOS / CHoCH (new range) on any shown
+  timeframe, and optionally price crossing Range 1's 50%.
 
 ## Settings (both)
 | Setting | Default | Meaning |

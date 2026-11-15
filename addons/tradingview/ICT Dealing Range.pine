@@ -1,0 +1,279 @@
+//@version=6
+// ICT Dealing Range — the current dealing range of up to three timeframes with its 50% equilibrium (EQ), premium /
+// discount shading and optional OTE levels. Same structure rules as the scanner (scanner/ictscan/engine/core.py):
+// N=2 swings (high above the 2 candles on each side); BOS / CHoCH on candle CLOSES; after a bullish break the protected
+// low is the lowest low between the broken level and the break candle, and the range runs from it to the leg's highest
+// high (bearish mirrored). The bias flips (CHoCH) only on a close beyond the protected level.
+// Closed candles only, so nothing repaints. Times in the table are New York.
+indicator("ICT Dealing Range", "ICT DR", overlay = true, max_bars_back = 2000, max_lines_count = 60, max_labels_count = 60, max_boxes_count = 20)
+
+// ───────────────────────────── Inputs
+G1 = "Range 1 (bias)"
+G2 = "Range 2"
+G3 = "Range 3 (entry)"
+G_LOOK = "Look and alerts"
+
+on1 = input.bool(true, "Show", group = G1, inline = "r1")
+tf1 = input.timeframe("240", "", group = G1, inline = "r1")
+col1 = input.color(color.orange, "", group = G1, inline = "r1")
+shade1 = input.bool(true, "Shade premium / discount", group = G1)
+
+on2 = input.bool(true, "Show", group = G2, inline = "r2")
+tf2 = input.timeframe("60", "", group = G2, inline = "r2")
+col2 = input.color(color.aqua, "", group = G2, inline = "r2")
+shade2 = input.bool(false, "Shade premium / discount", group = G2)
+
+on3 = input.bool(false, "Show", group = G3, inline = "r3")
+tf3 = input.timeframe("15", "", group = G3, inline = "r3")
+col3 = input.color(color.silver, "", group = G3, inline = "r3")
+shade3 = input.bool(false, "Shade premium / discount", group = G3)
+
+showOte = input.bool(false, "OTE levels 62 / 70.5 / 79 %", group = G_LOOK, tooltip = "Measured from the leg's extreme back towards the protected level: in a bullish range they sit in discount, in a bearish range in premium.")
+showTable = input.bool(true, "Status table", group = G_LOOK)
+tablePos = input.string("Top right", "Table position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = G_LOOK)
+rightBars = input.int(15, "Extend right (bars)", minval = 1, maxval = 200, group = G_LOOK)
+alertEvents = input.bool(true, "Alert on BOS / CHoCH (new range)", group = G_LOOK)
+alertEq = input.bool(false, "Alert when price crosses Range 1's 50%", group = G_LOOK)
+
+// ───────────────────────────── Structure (runs inside request.security on each range's timeframe)
+// State after each bar: st 1 bullish / -1 bearish / 0 undefined; prot = protected level (range origin); ext = leg extreme;
+// kind 0 first break / 1 BOS / 2 CHoCH; evT = open time of the break candle.
+dr() =>
+    var int st = 0
+    var float protP = na
+    var int protI = na
+    var int protT = na
+    var float ext = na
+    var int extT = na
+    var float lhP = na
+    var int lhI = na
+    var bool lhBroken = true
+    var float llP = na
+    var int llI = na
+    var bool llBroken = true
+    var int kind = na
+    var int evT = na
+    bool upSwing = not na(lhP) and not lhBroken and close > lhP
+    bool dnSwing = not na(llP) and not llBroken and close < llP
+    bool upProt = st == -1 and not na(protP) and close > protP
+    bool dnProt = st == 1 and not na(protP) and close < protP
+    bool goUp = (st >= 0 and upSwing) or upProt
+    bool goDn = (st <= 0 and dnSwing) or dnProt
+    if goUp
+        int ref = upSwing ? lhI : protI
+        if upSwing
+            lhBroken := true
+        kind := st == 1 ? 1 : st == -1 ? 2 : 0
+        int span = math.min(bar_index - ref, 1999)
+        // earliest lowest low between the broken level and this candle = protected low
+        int o = 0
+        float lo = low
+        for k = 0 to span
+            if low[k] <= lo
+                lo := low[k]
+                o := k
+        int h = o
+        float hi = high[o]
+        for k = 0 to o
+            if high[k] >= hi
+                hi := high[k]
+                h := k
+        st := 1
+        protP := lo
+        protI := bar_index - o
+        protT := time[o]
+        ext := hi
+        extT := time[h]
+        evT := time
+    else if goDn
+        int ref = dnSwing ? llI : protI
+        if dnSwing
+            llBroken := true
+        kind := st == -1 ? 1 : st == 1 ? 2 : 0
+        int span = math.min(bar_index - ref, 1999)
+        int o = 0
+        float hi = high
+        for k = 0 to span
+            if high[k] >= hi
+                hi := high[k]
+                o := k
+        int l = o
+        float lo = low[o]
+        for k = 0 to o
+            if low[k] <= lo
+                lo := low[k]
+                l := k
+        st := -1
+        protP := hi
+        protI := bar_index - o
+        protT := time[o]
+        ext := lo
+        extT := time[l]
+        evT := time
+    else if st == 1 and high > ext
+        ext := high
+        extT := time
+    else if st == -1 and low < ext
+        ext := low
+        extT := time
+    // a swing confirmed on this candle can be broken from the next candle on (scanner: conf < j)
+    if high[2] > high[1] and high[2] > high and high[2] > high[3] and high[2] > high[4]
+        lhP := high[2]
+        lhI := bar_index - 2
+        lhBroken := false
+    if low[2] < low[1] and low[2] < low and low[2] < low[3] and low[2] < low[4]
+        llP := low[2]
+        llI := bar_index - 2
+        llBroken := false
+    [st, protP, protT, ext, extT, kind, evT]
+
+// Values as of the last CLOSED candle of the requested timeframe (used with lookahead_on → no repainting).
+drClosed() =>
+    [a, b, c, d, e, f, g] = dr()
+    [a[1], b[1], c[1], d[1], e[1], f[1], g[1]]
+
+// ───────────────────────────── Helpers
+norm(string tf) => tf == "" ? timeframe.period : tf
+
+tfName(string tf) =>
+    int s = timeframe.in_seconds(norm(tf))
+    s < 3600 ? str.tostring(math.round(s / 60)) + "m" : s < 86400 ? str.tostring(math.round(s / 3600)) + "H" : s < 604800 ? "D" : s < 2419200 ? "W" : "M"
+
+usable(bool on, string tf) => on and timeframe.in_seconds(norm(tf)) >= timeframe.in_seconds(timeframe.period)
+
+fmt(float x) => str.tostring(x, format.mintick)
+
+kindText(int k) => k == 2 ? "CHoCH" : k == 1 ? "BOS" : "first break"
+
+type Drawing
+    array<line> lines
+    array<label> labels
+    array<box> boxes
+
+newDrawing() => Drawing.new(array.new<line>(), array.new<label>(), array.new<box>())
+
+clearDrawing(Drawing d) =>
+    for l in d.lines
+        l.delete()
+    for lb in d.labels
+        lb.delete()
+    for b in d.boxes
+        b.delete()
+    d.lines.clear()
+    d.labels.clear()
+    d.boxes.clear()
+
+tag(Drawing d, int x, float y, string txt, color c) =>
+    d.labels.push(label.new(x, y, txt, xloc = xloc.bar_time, color = color.new(color.black, 100), style = label.style_label_left, textcolor = c, size = size.small))
+
+drawRange(Drawing d, string name, int st, float lo, float hi, int x1, int x2, color c, bool shade) =>
+    clearDrawing(d)
+    float mid = (lo + hi) / 2
+    if shade
+        d.boxes.push(box.new(x1, hi, x2, mid, border_width = 0, xloc = xloc.bar_time, bgcolor = color.new(color.red, 90)))
+        d.boxes.push(box.new(x1, mid, x2, lo, border_width = 0, xloc = xloc.bar_time, bgcolor = color.new(color.green, 90)))
+    d.lines.push(line.new(x1, hi, x2, hi, xloc = xloc.bar_time, color = c, width = 2))
+    d.lines.push(line.new(x1, lo, x2, lo, xloc = xloc.bar_time, color = c, width = 2))
+    d.lines.push(line.new(x1, mid, x2, mid, xloc = xloc.bar_time, color = c, style = line.style_dashed))
+    string dir = st == 1 ? "▲" : "▼"
+    tag(d, x2, hi, name + " DR high " + fmt(hi) + (st == 1 ? " (extreme)" : " (protected)"), c)
+    tag(d, x2, mid, name + " EQ 50% " + fmt(mid) + " " + dir, c)
+    tag(d, x2, lo, name + " DR low " + fmt(lo) + (st == 1 ? " (protected)" : " (extreme)"), c)
+    if showOte
+        array<float> ratios = array.from(0.62, 0.705, 0.79)
+        array<string> names = array.from("62%", "70.5%", "79%")
+        for [i, r] in ratios
+            float y = st == 1 ? hi - r * (hi - lo) : lo + r * (hi - lo)
+            d.lines.push(line.new(x1, y, x2, y, xloc = xloc.bar_time, color = color.new(c, 40), style = line.style_dotted))
+            tag(d, x2, y, name + " OTE " + names.get(i), color.new(c, 30))
+
+// ───────────────────────────── Ranges
+[s1, p1, pt1, e1, et1, k1, ev1] = request.security(syminfo.tickerid, tf1, drClosed(), lookahead = barmerge.lookahead_on)
+[s2, p2, pt2, e2, et2, k2, ev2] = request.security(syminfo.tickerid, tf2, drClosed(), lookahead = barmerge.lookahead_on)
+[s3, p3, pt3, e3, et3, k3, ev3] = request.security(syminfo.tickerid, tf3, drClosed(), lookahead = barmerge.lookahead_on)
+
+ok1 = usable(on1, tf1)
+ok2 = usable(on2, tf2)
+ok3 = usable(on3, tf3)
+lo1 = s1 == 1 ? p1 : e1
+hi1 = s1 == 1 ? e1 : p1
+lo2 = s2 == 1 ? p2 : e2
+hi2 = s2 == 1 ? e2 : p2
+lo3 = s3 == 1 ? p3 : e3
+hi3 = s3 == 1 ? e3 : p3
+mid1 = (lo1 + hi1) / 2
+
+var Drawing d1 = newDrawing()
+var Drawing d2 = newDrawing()
+var Drawing d3 = newDrawing()
+
+ePos = switch tablePos
+    "Bottom right" => position.bottom_right
+    "Top left" => position.top_left
+    "Bottom left" => position.bottom_left
+    => position.top_right
+var table tbl = table.new(ePos, 6, 4, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.new(color.gray, 70))
+
+cell(int col, int row, string txt, color c) =>
+    table.cell(tbl, col, row, txt, text_color = c, text_size = size.small, text_halign = text.align_left)
+
+fillRow(int row, bool on, bool ok, string tf, int st, float lo, float hi, int k, int evt, color c) =>
+    if on
+        cell(0, row, tfName(tf), c)
+        if not ok
+            cell(1, row, "lower than the chart timeframe", color.gray)
+        else if st == 0 or na(lo) or na(hi) or hi <= lo
+            cell(1, row, "no structure yet (load more history)", color.gray)
+        else
+            float pct = (close - lo) / (hi - lo) * 100
+            string zone = pct > 100 ? "above range" : pct < 0 ? "below range" : pct >= 50 ? "premium" : "discount"
+            color zc = pct >= 50 ? color.new(color.red, 10) : color.new(color.lime, 10)
+            cell(1, row, st == 1 ? "bullish" : "bearish", st == 1 ? color.lime : color.red)
+            cell(2, row, fmt(lo) + " – " + fmt(hi), color.white)
+            cell(3, row, fmt((lo + hi) / 2), color.white)
+            cell(4, row, str.tostring(math.round(pct)) + "% " + zone, zc)
+            cell(5, row, kindText(k) + " · " + str.format_time(evt, "EEE dd MMM HH:mm", "America/New_York") + " candle", color.gray)
+
+if barstate.islast
+    int barMs = timeframe.in_seconds(timeframe.period) * 1000
+    int x2 = time + rightBars * barMs
+    clearDrawing(d1)
+    clearDrawing(d2)
+    clearDrawing(d3)
+    if ok1 and s1 != 0 and not na(lo1) and not na(hi1)
+        drawRange(d1, tfName(tf1), s1, lo1, hi1, math.min(pt1, et1), x2, col1, shade1)
+    if ok2 and s2 != 0 and not na(lo2) and not na(hi2)
+        drawRange(d2, tfName(tf2), s2, lo2, hi2, math.min(pt2, et2), x2, col2, shade2)
+    if ok3 and s3 != 0 and not na(lo3) and not na(hi3)
+        drawRange(d3, tfName(tf3), s3, lo3, hi3, math.min(pt3, et3), x2, col3, shade3)
+    table.clear(tbl, 0, 0, 5, 3)
+    if showTable
+        cell(0, 0, "TF", color.gray)
+        cell(1, 0, "Bias", color.gray)
+        cell(2, 0, "Dealing range", color.gray)
+        cell(3, 0, "EQ 50%", color.gray)
+        cell(4, 0, "Price", color.gray)
+        cell(5, 0, "Last break (NY)", color.gray)
+        fillRow(1, on1, ok1, tf1, s1, lo1, hi1, k1, ev1, col1)
+        fillRow(2, on2, ok2, tf2, s2, lo2, hi2, k2, ev2, col2)
+        fillRow(3, on3, ok3, tf3, s3, lo3, hi3, k3, ev3, col3)
+
+// ───────────────────────────── Alerts (Add alert → "Any alert() function call")
+newEvent(int ev) => not na(ev) and (na(ev[1]) or ev != ev[1])
+
+eventMsg(string tf, int st, float lo, float hi, int k) =>
+    syminfo.ticker + " " + tfName(tf) + " " + kindText(k) + " " + (st == 1 ? "bullish" : "bearish") + " — new dealing range " + fmt(lo) + " – " + fmt(hi) + ", EQ " + fmt((lo + hi) / 2)
+
+n1 = newEvent(ev1)
+n2 = newEvent(ev2)
+n3 = newEvent(ev3)
+eqCross = ta.cross(close, mid1)
+if alertEvents
+    if ok1 and s1 != 0 and n1
+        alert(eventMsg(tf1, s1, lo1, hi1, k1), alert.freq_once_per_bar)
+    if ok2 and s2 != 0 and n2
+        alert(eventMsg(tf2, s2, lo2, hi2, k2), alert.freq_once_per_bar)
+    if ok3 and s3 != 0 and n3
+        alert(eventMsg(tf3, s3, lo3, hi3, k3), alert.freq_once_per_bar)
+if alertEq and ok1 and s1 != 0 and eqCross
+    alert(syminfo.ticker + " crossed the " + tfName(tf1) + " EQ 50% " + fmt(mid1) + (close > mid1 ? " — now in premium" : " — now in discount"), alert.freq_once_per_bar_close)
