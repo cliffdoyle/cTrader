@@ -1,0 +1,422 @@
+//@version=6
+// ICT SMT — SMT divergence between NAS100 / US500 / US30 at the previous period's high or low, one level per period:
+// Yearly, Monthly, Weekly, Daily, inter-session (Asia / London / NY AM / NY Lunch / NY PM), 90-min, 60-min, 30-min, 10-min.
+// Rule (same for every level): in the current period one index trades above the previous period's high (below its low)
+// while another index has not = bearish (bullish) SMT. On this chart a line joins the two highs (lows) being compared:
+// the previous period's high and this period's high — red for bearish, blue for bullish.
+// Only closed candles of each level's confirmation timeframe count, so an SMT appears after that candle closes.
+// While the period is running the SMT goes away as soon as the lagging index also takes its level; after the period has
+// closed it goes away when price on this chart trades beyond the SMT's high (bearish) or low (bullish), or when it expires.
+// Times are New York (DST-aware); the trading day rolls at 17:00 NY. Separate from ICT Scanner Levels; both can share a chart.
+indicator("ICT SMT", "SMT", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ───────────────────────────── Inputs
+G_IDX = "Indices"
+G_LVL = "SMT levels"
+G_CNF = "Confirmation candle"
+G_SES = "Sessions (New York time)"
+G_LOOK = "Look"
+
+smtPair = input.string("All three", "Compare", options = ["All three", "NAS100 vs US500", "NAS100 vs US30", "US500 vs US30"], group = G_IDX)
+symNQ = input.symbol("PEPPERSTONE:NAS100", "NAS100", group = G_IDX)
+symES = input.symbol("PEPPERSTONE:US500", "US500", group = G_IDX)
+symYM = input.symbol("PEPPERSTONE:US30", "US30", group = G_IDX)
+
+onY = input.bool(true, "Yearly (Y / M / W / D charts)", group = G_LVL)
+onM = input.bool(true, "Monthly (M / W / D / 4H charts)", group = G_LVL)
+onW = input.bool(true, "Weekly (W / D / 4H / 1H charts)", group = G_LVL)
+onD = input.bool(true, "Daily (D / 4H / 1H / 15m charts)", group = G_LVL)
+onS = input.bool(true, "Inter-session (1m - 59m charts)", group = G_LVL)
+on90 = input.bool(true, "90-min (1m - 59m charts)", group = G_LVL)
+on60 = input.bool(true, "60-min (1m - 59m charts)", group = G_LVL)
+on30 = input.bool(true, "30-min (1m - 10m charts)", group = G_LVL)
+on10 = input.bool(true, "10-min (1m - 10m charts)", group = G_LVL)
+
+cfD = input.timeframe("1", "Daily SMT", options = ["1", "5", "15"], group = G_CNF, tooltip = "Candle that must close before a Daily SMT shows. Yearly = D, Monthly = 4H, Weekly = 1H, sessions / 90 / 60 / 30-min = 1m (fixed).")
+cf10 = input.timeframe("1", "10-min SMT", options = ["1", "30S"], group = G_CNF, tooltip = "30S needs a TradingView plan with second charts (Plus or higher); on other plans the indicator stops with an error, so 1 minute is the default.")
+
+sAsia = input.session("2000-0000", "Asia", group = G_SES)
+sLon = input.session("0200-0500", "London", group = G_SES)
+sAM = input.session("0930-1200", "New York AM", group = G_SES)
+sLun = input.session("1200-1330", "New York Lunch", group = G_SES)
+sPM = input.session("1330-1600", "New York PM", group = G_SES)
+
+bearCol = input.color(color.red, "Bearish SMT", group = G_LOOK, inline = "c")
+bullCol = input.color(#2962FF, "Bullish SMT", group = G_LOOK, inline = "c")
+showLbl = input.bool(true, "Labels (hover for details)", group = G_LOOK)
+
+// ───────────────────────────── Constants and time keys (New York clock)
+NYZ = "America/New_York"
+MINUTE = 60000
+HOUR = 3600000
+DAY = 86400000
+F = 17   // values per level in a request array (see track)
+
+sessMin(string s) =>
+    int a = int(str.tonumber(str.substring(s, 0, 2))) * 60 + int(str.tonumber(str.substring(s, 2, 4)))
+    int b = int(str.tonumber(str.substring(s, 5, 7))) * 60 + int(str.tonumber(str.substring(s, 7, 9)))
+    [a, b == 0 ? 1440 : b]
+
+[s0a, s0b] = sessMin(sAsia)
+[s1a, s1b] = sessMin(sLon)
+[s2a, s2b] = sessMin(sAM)
+[s3a, s3b] = sessMin(sLun)
+[s4a, s4b] = sessMin(sPM)
+
+inRange(int m, int a, int b) => b > a ? (m >= a and m < b) : (m >= a or m < b)
+
+// day number of the trading date (18:00 NY open → 17:00 NY close; Sunday evening belongs to Monday)
+tdDays(int t) =>
+    int s = t + 7 * HOUR
+    int(math.floor(timestamp(NYZ, year(s, NYZ), month(s, NYZ), dayofmonth(s, NYZ), 0, 0) / DAY))
+
+yearKey(int t) => year(t + 7 * HOUR, NYZ)
+monthKey(int t) => year(t + 7 * HOUR, NYZ) * 12 + month(t + 7 * HOUR, NYZ)
+weekKey(int t) => int(math.floor((tdDays(t) + 3) / 7))
+sessKey(int t) =>
+    int m = hour(t, NYZ) * 60 + minute(t, NYZ)
+    int i = inRange(m, s0a, s0b) ? 0 : inRange(m, s1a, s1b) ? 1 : inRange(m, s2a, s2b) ? 2 : inRange(m, s3a, s3b) ? 3 : inRange(m, s4a, s4b) ? 4 : -1
+    na(t) or i < 0 ? na : tdDays(t) * 10 + i
+// 90-minute cycles anchored at 07:00 NY (07:00, 08:30, 10:00 … like the scanner's 90-min boxes), all day long
+key90(int t) =>
+    int s = t - 7 * HOUR
+    int m = hour(s, NYZ) * 60 + minute(s, NYZ)
+    int d = int(math.floor(timestamp(NYZ, year(s, NYZ), month(s, NYZ), dayofmonth(s, NYZ), 0, 0) / DAY))
+    na(t) ? na : d * 16 + int(math.floor(m / 90))
+keyMin(int t, int mins) => na(t) ? na : int(math.floor(t / (mins * MINUTE)))
+
+// ───────────────────────────── Period tracking (runs inside request.security on the confirmation timeframe)
+// Fed with the last CLOSED candle only. Returns, for the period key k:
+// 0 key, 1-4 previous period high/time/low/time, 5-8 current period high/time/low/time,
+// 9-12 the period before that (reference of the previous period), 13-14 time the current period took the previous
+// high / low (close of the candle that did it), 15-16 the same for the previous period.
+track(int k, float h, float l, int t, int tc) =>
+    var float curK = na
+    var float pH = na
+    var float pHt = na
+    var float pL = na
+    var float pLt = na
+    var float cH = na
+    var float cHt = na
+    var float cL = na
+    var float cLt = na
+    var float p2H = na
+    var float p2Ht = na
+    var float p2L = na
+    var float p2Lt = na
+    var float tkH = na
+    var float tkL = na
+    var float ptkH = na
+    var float ptkL = na
+    if not na(k) and not na(h) and not na(l)
+        if na(curK) or k != curK
+            p2H := pH
+            p2Ht := pHt
+            p2L := pL
+            p2Lt := pLt
+            pH := cH
+            pHt := cHt
+            pL := cL
+            pLt := cLt
+            ptkH := tkH
+            ptkL := tkL
+            cH := h
+            cHt := t
+            cL := l
+            cLt := t
+            tkH := na
+            tkL := na
+            curK := k
+        else
+            if h > cH
+                cH := h
+                cHt := t
+            if l < cL
+                cL := l
+                cLt := t
+        if na(tkH) and not na(pH) and h > pH
+            tkH := tc
+        if na(tkL) and not na(pL) and l < pL
+            tkL := tc
+    array.from(curK, pH, pHt, pL, pLt, cH, cHt, cL, cLt, p2H, p2Ht, p2L, p2Lt, tkH, tkL, ptkH, ptkL)
+
+closedBar() =>
+    int tc = na(time_close[1]) ? time : time_close[1]
+    [high[1], low[1], time[1], tc]
+
+gYear() =>
+    [h, l, t, tc] = closedBar()
+    track(na(t) ? na : yearKey(t), h, l, t, tc)
+gMonth() =>
+    [h, l, t, tc] = closedBar()
+    track(na(t) ? na : monthKey(t), h, l, t, tc)
+gWeek() =>
+    [h, l, t, tc] = closedBar()
+    track(na(t) ? na : weekKey(t), h, l, t, tc)
+gDay() =>
+    [h, l, t, tc] = closedBar()
+    track(na(t) ? na : tdDays(t), h, l, t, tc)
+gIntra() =>
+    [h, l, t, tc] = closedBar()
+    array<float> out = track(sessKey(t), h, l, t, tc)
+    out.concat(track(key90(t), h, l, t, tc))
+    out.concat(track(keyMin(t, 60), h, l, t, tc))
+    out.concat(track(keyMin(t, 30), h, l, t, tc))
+    out
+gTen() =>
+    [h, l, t, tc] = closedBar()
+    track(keyMin(t, 10), h, l, t, tc)
+
+// ───────────────────────────── Which index is this chart, and which ones it is compared with
+idxOf(string tk) =>
+    string t = str.upper(tk)
+    str.contains(t, "NAS") or str.contains(t, "NDX") or str.contains(t, "US100") or str.contains(t, "USTEC") or str.startswith(t, "NQ") ? 0 : str.contains(t, "SPX") or str.contains(t, "US500") or str.contains(t, "SP500") or str.startswith(t, "ES") ? 1 : str.contains(t, "US30") or str.contains(t, "WS30") or str.contains(t, "DJ") or str.contains(t, "DOW") or str.startswith(t, "YM") ? 2 : -1
+
+nameOf(int i) => i == 0 ? "NAS100" : i == 1 ? "US500" : i == 2 ? "US30" : "?"
+symOf(int i) => i == 0 ? symNQ : i == 1 ? symES : symYM
+pairHas(int i) => smtPair == "All three" ? true : smtPair == "NAS100 vs US500" ? (i == 0 or i == 1) : smtPair == "NAS100 vs US30" ? (i == 0 or i == 2) : (i == 1 or i == 2)
+
+chartIdx = idxOf(syminfo.ticker)
+cand(int i) => i != chartIdx and pairHas(i)
+bIdx = cand(0) ? 0 : cand(1) ? 1 : cand(2) ? 2 : -1
+cIdx = bIdx == 0 ? (cand(1) ? 1 : cand(2) ? 2 : -1) : bIdx == 1 ? (cand(2) ? 2 : -1) : -1
+ready = chartIdx >= 0 and pairHas(chartIdx) and bIdx >= 0
+
+symA = syminfo.tickerid
+symB = bIdx >= 0 ? symOf(bIdx) : syminfo.tickerid
+symC = cIdx >= 0 ? symOf(cIdx) : symB
+
+// ───────────────────────────── Where each level is shown
+tfSec = timeframe.in_seconds()
+visK(int K) =>
+    switch K
+        0 => tfSec >= 86400
+        1 => tfSec >= 14400 and tfSec <= timeframe.in_seconds("1M")
+        2 => tfSec >= 3600 and tfSec <= 604800
+        3 => tfSec >= 900 and tfSec <= 86400
+        4 => tfSec >= 60 and tfSec < 3600
+        5 => tfSec >= 60 and tfSec < 3600
+        6 => tfSec >= 60 and tfSec < 3600
+        => tfSec >= 60 and tfSec <= 600
+onK(int K) =>
+    switch K
+        0 => onY
+        1 => onM
+        2 => onW
+        3 => onD
+        4 => onS
+        5 => on90
+        6 => on60
+        7 => on30
+        => on10
+
+// levels that are not shown here request the chart's own timeframe (cheap) instead of their confirmation candles
+tfY = ready and onY and visK(0) ? "D" : timeframe.period
+tfM = ready and onM and visK(1) ? "240" : timeframe.period
+tfW = ready and onW and visK(2) ? "60" : timeframe.period
+tfD = ready and onD and visK(3) ? cfD : timeframe.period
+tfI = ready and (onS or on90 or on60 or on30) and visK(4) ? "1" : timeframe.period
+tfT = ready and on10 and visK(8) ? cf10 : timeframe.period
+
+aY = request.security(symA, tfY, gYear())
+bY = request.security(symB, tfY, gYear(), ignore_invalid_symbol = true)
+cY = request.security(symC, tfY, gYear(), ignore_invalid_symbol = true)
+aM = request.security(symA, tfM, gMonth())
+bM = request.security(symB, tfM, gMonth(), ignore_invalid_symbol = true)
+cM = request.security(symC, tfM, gMonth(), ignore_invalid_symbol = true)
+aW = request.security(symA, tfW, gWeek())
+bW = request.security(symB, tfW, gWeek(), ignore_invalid_symbol = true)
+cW = request.security(symC, tfW, gWeek(), ignore_invalid_symbol = true)
+aD = request.security(symA, tfD, gDay())
+bD = request.security(symB, tfD, gDay(), ignore_invalid_symbol = true)
+cD = request.security(symC, tfD, gDay(), ignore_invalid_symbol = true)
+aI = request.security(symA, tfI, gIntra())
+bI = request.security(symB, tfI, gIntra(), ignore_invalid_symbol = true)
+cI = request.security(symC, tfI, gIntra(), ignore_invalid_symbol = true)
+aT = request.security(symA, tfT, gTen())
+bT = request.security(symB, tfT, gTen(), ignore_invalid_symbol = true)
+cT = request.security(symC, tfT, gTen(), ignore_invalid_symbol = true)
+
+// level K: 0 Yearly, 1 Monthly, 2 Weekly, 3 Daily, 4 Session, 5 90-min, 6 60-min, 7 30-min, 8 10-min; slot s: 0 this chart
+arrFor(int K, int s) =>
+    switch K
+        0 => s == 0 ? aY : s == 1 ? bY : cY
+        1 => s == 0 ? aM : s == 1 ? bM : cM
+        2 => s == 0 ? aW : s == 1 ? bW : cW
+        3 => s == 0 ? aD : s == 1 ? bD : cD
+        8 => s == 0 ? aT : s == 1 ? bT : cT
+        => s == 0 ? aI : s == 1 ? bI : cI
+offFor(int K) => K >= 4 and K <= 7 ? (K - 4) * F : 0
+slotUsed(int s) => s == 0 ? true : s == 1 ? bIdx >= 0 : cIdx >= 0
+slotName(int s) => s == 0 ? nameOf(chartIdx) : s == 1 ? nameOf(bIdx) : nameOf(cIdx)
+
+kindName(int K) =>
+    switch K
+        0 => "Yearly"
+        1 => "Monthly"
+        2 => "Weekly"
+        3 => "Daily"
+        4 => "Session"
+        5 => "90m"
+        6 => "60m"
+        7 => "30m"
+        => "10m"
+sessName(int i) => i == 0 ? "Asia" : i == 1 ? "London" : i == 2 ? "NY AM" : i == 3 ? "NY Lunch" : "NY PM"
+levelDesc(int K, bool bear) =>
+    string hl = bear ? "high" : "low"
+    switch K
+        0 => "last year's " + hl
+        1 => "last month's " + hl
+        2 => "last week's " + hl
+        3 => "the previous day's " + hl
+        4 => "the previous session's " + hl
+        5 => "the previous 90-min cycle's " + hl
+        6 => "the previous hour's " + hl
+        7 => "the previous 30-min " + hl
+        => "the previous 10-min " + hl
+
+// Does an SMT exist? prev = false: the running period vs the previous one; true: the period that just closed.
+// Every compared index must be in the same period (key ck) with a reference level; at least one took it, one did not.
+evalDiv(int K, bool bear, bool prev, float ck) =>
+    int o = offFor(K)
+    int nT = 0
+    int nH = 0
+    string tk = ""
+    string hd = ""
+    bool ok = true
+    for s = 0 to 2
+        if slotUsed(s)
+            array<float> a = arrFor(K, s)
+            if na(a)
+                ok := false
+            else
+                float ref = a.get(o + (prev ? (bear ? 9 : 11) : (bear ? 1 : 3)))
+                float tkT = a.get(o + (prev ? (bear ? 15 : 16) : (bear ? 13 : 14)))
+                if na(ref) or a.get(o) != ck
+                    ok := false
+                else if na(tkT)
+                    nH += 1
+                    hd := hd + (hd == "" ? "" : ", ") + slotName(s)
+                else
+                    nT += 1
+                    tk := tk + (tk == "" ? "" : ", ") + slotName(s)
+    [ok and nT > 0 and nH > 0, tk + " took " + levelDesc(K, bear) + " · " + hd + " did not"]
+
+// ───────────────────────────── SMTs of closed periods (kept until broken or expired)
+type Smt
+    int kind
+    bool bear
+    int t1
+    float p1
+    int t2
+    float p2
+    float ext
+    int sessN
+    string info
+    int sIdx
+
+var array<float> lastK = array.new<float>(9, na)
+var array<Smt> store = array.new<Smt>()
+var int sessCount = 0
+var int lastSess = na
+int skNow = sessKey(time)
+if not na(skNow) and (na(lastSess) or skNow != lastSess)
+    sessCount += 1
+    lastSess := skNow
+
+record(int K, bool bear, float ck, float prevKey) =>
+    [ok, info] = evalDiv(K, bear, true, ck)
+    if ok
+        array<float> a = arrFor(K, 0)
+        int o = offFor(K)
+        float p1 = a.get(o + (bear ? 9 : 11))
+        float t1 = a.get(o + (bear ? 10 : 12))
+        float p2 = a.get(o + (bear ? 1 : 3))
+        float t2 = a.get(o + (bear ? 2 : 4))
+        if not na(p1) and not na(p2) and not na(t1) and not na(t2)
+            store.push(Smt.new(K, bear, int(t1), p1, int(t2), p2, bear ? math.max(p1, p2) : math.min(p1, p2), sessCount, info, K == 4 ? int(prevKey % 10) : -1))
+            if store.size() > 300
+                store.shift()
+
+expired(Smt e) =>
+    switch e.kind
+        0 => year(time, NYZ) - year(e.t2, NYZ) >= 5
+        1 => (year(time, NYZ) * 12 + month(time, NYZ)) - (year(e.t2, NYZ) * 12 + month(e.t2, NYZ)) >= 10
+        2 => time - e.t2 > 21 * DAY
+        3 => time - e.t2 > 10 * DAY
+        4 => time - e.t2 > DAY
+        5 => sessCount - e.sessN >= 2
+        6 => time - e.t2 > 5 * HOUR
+        7 => time - e.t2 > 2 * HOUR
+        => time - e.t2 > HOUR
+
+if ready
+    for K = 0 to 8
+        if visK(K) and onK(K)
+            array<float> a = arrFor(K, 0)
+            if not na(a)
+                float ck = a.get(offFor(K))
+                float lk = lastK.get(K)
+                if not na(ck) and not na(lk) and ck != lk
+                    record(K, true, ck, lk)
+                    record(K, false, ck, lk)
+                lastK.set(K, ck)
+    int i = store.size() - 1
+    while i >= 0
+        Smt e = store.get(i)
+        if (e.bear and high > e.ext) or (not e.bear and low < e.ext) or expired(e)
+            store.remove(i)
+        i -= 1
+
+// ───────────────────────────── Drawing (last bar only)
+var array<line> lns = array.new<line>()
+var array<label> lbs = array.new<label>()
+
+drawSmt(int K, bool bear, int t1, float p1, int t2, float p2, string info, int sIdx, bool live) =>
+    color c = bear ? bearCol : bullCol
+    int w = K <= 1 ? 3 : K <= 3 ? 2 : 1
+    lns.push(line.new(t1, p1, t2, p2, xloc.bar_time, extend.none, c, line.style_solid, w))
+    if showLbl
+        string name = (K == 4 ? sessName(sIdx) : kindName(K)) + " SMT"
+        string tip = (bear ? "Bearish " : "Bullish ") + name + (live ? " (current period)" : "") + "\n" + info + "\n" + str.format_time(t1, "EEE dd MMM HH:mm", NYZ) + " → " + str.format_time(t2, "EEE dd MMM HH:mm", NYZ) + " NY"
+        lbs.push(label.new(t2, p2, name, xloc.bar_time, yloc.price, color.new(color.black, 100), bear ? label.style_label_down : label.style_label_up, c, size.small, tooltip = tip))
+
+var table msg = table.new(position.bottom_right, 1, 1)
+
+if barstate.islast
+    for l in lns
+        l.delete()
+    for lb in lbs
+        lb.delete()
+    lns.clear()
+    lbs.clear()
+    table.clear(msg, 0, 0)
+    bool anyVis = false
+    for K = 0 to 8
+        if visK(K) and onK(K)
+            anyVis := true
+    if not ready
+        string why = chartIdx < 0 ? "ICT SMT: open NAS100, US500 or US30 (this chart: " + syminfo.ticker + ")" : "ICT SMT: " + nameOf(chartIdx) + " is not in the comparison \"" + smtPair + "\""
+        table.cell(msg, 0, 0, why, text_color = color.gray, text_size = size.small)
+    else if not anyVis
+        table.cell(msg, 0, 0, "ICT SMT: no SMT level is shown on this timeframe", text_color = color.gray, text_size = size.small)
+    else
+        for e in store
+            if visK(e.kind) and onK(e.kind)
+                drawSmt(e.kind, e.bear, e.t1, e.p1, e.t2, e.p2, e.info, e.sIdx, false)
+        for K = 0 to 8
+            if visK(K) and onK(K)
+                array<float> a = arrFor(K, 0)
+                if not na(a)
+                    int o = offFor(K)
+                    float ck = a.get(o)
+                    if not na(ck)
+                        for d = 0 to 1
+                            bool bear = d == 0
+                            [ok, info] = evalDiv(K, bear, false, ck)
+                            float p1 = a.get(o + (bear ? 1 : 3))
+                            float t1 = a.get(o + (bear ? 2 : 4))
+                            float p2 = a.get(o + (bear ? 5 : 7))
+                            float t2 = a.get(o + (bear ? 6 : 8))
+                            if ok and not na(p1) and not na(p2) and not na(t1) and not na(t2)
+                                drawSmt(K, bear, int(t1), p1, int(t2), p2, info, K == 4 ? int(ck % 10) : -1, true)

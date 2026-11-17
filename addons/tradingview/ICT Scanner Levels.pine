@@ -40,6 +40,8 @@ smtOpens = input.bool(true, "SMT at the opening prices", group = G_OPEN, tooltip
 
 showSmt = input.bool(true, "SMT panel", group = G_SMT)
 smtMarks = input.bool(true, "Mark level SMT on the chart", group = G_SMT, tooltip = "As soon as one index takes a level (previous 90-min / day / week high or low, or a closed Asia / London / NY AM session high or low) and another does not, label the candle that took it (or this index's failed high / low) and highlight the level. Alerts: create an alert on this indicator with \"Any alert() function call\".")
+smtShowIn = input.string("Latest only", "SMT markers shown", options = ["Latest only", "Latest 3", "All"], group = G_SMT, tooltip = "Which of today's SMT markers stay on the chart. Latest only = just the newest one (the panel and alerts still use all of them).")
+smtShort = input.bool(true, "Short marker text (hover for details)", group = G_SMT, tooltip = "Labels read e.g. \"SMT ▼ W.O\" in small, see-through boxes so the candles stay visible; hover a label for the full text.")
 smtSess = input.bool(true, "SMT at Asia / London / NY AM highs and lows", group = G_SMT, tooltip = "After a session closes, watch its high and low on every index for the rest of the trading day.")
 smtSwingLv = input.bool(true, "SMT at the latest 15m / 1H swing highs and lows (instant)", group = G_SMT, tooltip = "Once a 15m or 1H swing high/low is confirmed it becomes a level on every index; the moment one index trades through its level and another has not, the SMT is marked on that candle (no waiting for a new swing to confirm).")
 swingStrict = input.string("Strict", "Swing-level SMT strictness", options = ["Loose", "Normal", "Strict"], group = G_SMT, tooltip = "Which swings count and how clearly the other index must hold. Loose: any 2-bar swing, any miss. Normal: lowest/highest of 5 bars, miss > 0.1 ATR. Strict: lowest/highest of 10 bars, miss > 0.25 ATR. Measured on last week's data, Strict gave about 8 per day on 15m and 2-3 per day on 1H.")
@@ -1326,7 +1328,8 @@ if barstate.islast
             // mark every live level SMT on this chart where it formed: the candle that took the level when this index took
             // it, or this index's own high/low (the one that failed to take it) when it did not
             if smtMarks
-                array<int> usedT = array.new<int>()
+                // newest first, so "Latest only" / "Latest 3" keep the most recent SMTs
+                array<Ev> shown = array.new<Ev>()
                 for e in evs
                     if e.src != 1 and not na(e.p1)
                         bool fits90 = e.tf != 10 or tier == 0 or tier <= 2
@@ -1335,24 +1338,38 @@ if barstate.islast
                         bool fitsSw = e.src != 3 or tier == 0 or tier <= (e.tf == 30 ? 2 : 3)
                         bool fitsOp = e.src != 5 or e.tf <= 52 or tier == 0 or tier <= 3
                         if fits90 and fitsDay and fitsSess and fitsSw and fitsOp
-                            color mc = e.bear ? COL_BEAR : COL_BULL
-                            string lvlName = e.src == 5 ? e.name : e.name + (e.src >= 2 ? (e.bear ? " high" : " low") : (e.bear ? " PXH" : " PXL"))
-                            bool took = e.lab == "took"
-                            // the moment this chart's own candles took the level (finer than the 5m / 1H request data)
-                            int chartTook = e.src >= 3 ? e.t1 : e.src == 2 ? sessTakenOnChart(e.tf - 20, tdNow, e.bear) : e.tf == 11 ? (e.bear ? pdhT : pdlT) : e.tf == 12 ? (e.bear ? pwhT : pwlT) : (tfSec <= 1800 and isLive(0, nCK, nowT) ? (e.bear ? nTH : nTL) : na)
-                            int mt = took ? (na(chartTook) ? e.t1 : chartTook) : e.t2
-                            float mp = took ? e.p1 : e.p2
-                            if not na(mt) and not na(mp)
-                                int stack = 0
-                                for u in usedT
-                                    if u == mt
-                                        stack += 1
-                                array.push(usedT, mt)
-                                float off = (atr * 0.05 + stack * atr * 0.45) * (e.bear ? 1 : -1)
-                                if not na(e.t0)
-                                    ln(e.t0, e.p1, lastT, e.p1, color.new(mc, 20), 2, line.style_dashed, false)
-                                string mtxt = (e.src == 4 ? "⚡ " : "") + "SMT " + (e.bear ? "▼ " : "▲ ") + lvlName + (took ? " taken · " + e.lag + " did not" : " not taken · " + e.lead + " took it")
-                                array.push(gLabels, label.new(mt, mp + off, mtxt, xloc.bar_time, yloc.price, color.new(mc, 15), e.bear ? label.style_label_down : label.style_label_up, color.white, TXT, text.align_center, text_formatting = text.format_bold))
+                            int pos = array.size(shown)
+                            if pos > 0
+                                for j = 0 to array.size(shown) - 1
+                                    Ev o = array.get(shown, j)
+                                    if e.t > o.t
+                                        pos := j
+                                        break
+                            array.insert(shown, pos, e)
+                int maxMarks = smtShowIn == "Latest only" ? 1 : smtShowIn == "Latest 3" ? 3 : 1000
+                while array.size(shown) > maxMarks
+                    array.pop(shown)
+                array<int> usedT = array.new<int>()
+                for e in shown
+                    color mc = e.bear ? COL_BEAR : COL_BULL
+                    string lvlName = e.src == 5 ? e.name : e.name + (e.src >= 2 ? (e.bear ? " high" : " low") : (e.bear ? " PXH" : " PXL"))
+                    bool took = e.lab == "took"
+                    // the moment this chart's own candles took the level (finer than the 5m / 1H request data)
+                    int chartTook = e.src >= 3 ? e.t1 : e.src == 2 ? sessTakenOnChart(e.tf - 20, tdNow, e.bear) : e.tf == 11 ? (e.bear ? pdhT : pdlT) : e.tf == 12 ? (e.bear ? pwhT : pwlT) : (tfSec <= 1800 and isLive(0, nCK, nowT) ? (e.bear ? nTH : nTL) : na)
+                    int mt = took ? (na(chartTook) ? e.t1 : chartTook) : e.t2
+                    float mp = took ? e.p1 : e.p2
+                    if not na(mt) and not na(mp)
+                        int stack = 0
+                        for u in usedT
+                            if u == mt
+                                stack += 1
+                        array.push(usedT, mt)
+                        float off = (atr * 0.05 + stack * atr * (smtShort ? 0.3 : 0.45)) * (e.bear ? 1 : -1)
+                        if not na(e.t0)
+                            ln(e.t0, e.p1, lastT, e.p1, color.new(mc, 20), 2, line.style_dashed, false)
+                        string head = (e.src == 4 ? "⚡ " : "") + "SMT " + (e.bear ? "▼ " : "▲ ") + lvlName
+                        string full = head + (took ? " taken · " + e.lag + " did not" : " not taken · " + e.lead + " took it")
+                        array.push(gLabels, label.new(mt, mp + off, smtShort ? head : full, xloc.bar_time, yloc.price, color.new(mc, smtShort ? 45 : 15), e.bear ? label.style_label_down : label.style_label_up, color.white, smtShort ? size.small : TXT, text.align_center, tooltip = full + " (" + hm(e.t) + " NY)", text_formatting = text.format_bold))
             // ranked: strongest timeframe first, newest first; absorbed (cancelled) swing SMTs dropped
             array<Ev> rk = array.new<Ev>()
             for e in evs

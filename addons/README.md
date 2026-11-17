@@ -98,6 +98,9 @@ Differences from the cTrader / MT5 add-ons:
   2 × 5m ATR away from it, one index trading back through its open while another stays short = SMT (all below → bearish,
   all above → bullish), live on the candle, until every index has traded through. One alert per open, per direction, per
   day. Replay on the week to 13 Nov: W.O 5, 09:30 open 5, 00:00 open 26 SMT moments (the chart only shows the current one).
+- **Marker clutter** ("SMT markers shown", default **Latest only**; "Short marker text", default on): only the newest SMT
+  marker stays on the chart (or the latest 3 / all), as a small see-through label such as "SMT ▼ W.O" so the candles
+  behind it stay visible; hover it for the full text and NY time. The panel and alerts still use every SMT.
 - **Alerts**: right-click the indicator → Add alert → condition "ICT Scanner Levels" → **Any alert() function call**. You
   get one alert per new SMT (cycle SMTs and 5m / 15m / 1H swing SMTs), with the indices that took / did not take the level.
 - A text "row" is a fixed 0.3 × H1 ATR (Pine cannot read the zoom), so at extreme zoom levels neighbouring labels can touch.
@@ -123,6 +126,39 @@ ICT Scanner Levels on the same chart.
   "no structure yet"; use M5 or higher (or scroll back to load more history).
 - Alerts: Add alert → "ICT Dealing Range" → **Any alert() function call**: a new BOS / CHoCH (new range) on any shown
   timeframe, and optionally price crossing Range 1's 50%.
+
+## TradingView — ICT SMT (separate indicator)
+`tradingview/ICT SMT.pine` draws SMT divergence between NAS100, US500 and US30 at the **previous period's high or low**,
+for nine levels. It is independent of ICT Scanner Levels (turn that one's SMT markers off if both are on one chart).
+Install like step 2 above (new indicator, paste, save as "ICT SMT", add to chart). Use it on NAS100, US500 or US30
+(any broker's name for them; the other indices come from the three symbol fields, default Pepperstone).
+- **Rule:** in the current period one index trades above the previous period's high (below its low) and another has not
+  = bearish (bullish) SMT. On this chart a **red** line joins the two highs being compared (previous period high → this
+  period's high); a **blue** line joins the two lows. Thicker lines for Yearly/Monthly (3 px) and Weekly/Daily (2 px).
+  Small label at the end ("Weekly SMT", "London SMT"…); hover it for which index took the level and the NY times.
+- **Levels, where they show, and the candle that must close first:**
+
+| Level | Previous period = | Shown on charts | Appears after a closed | Disappears when broken or after |
+|---|---|---|---|---|
+| Yearly | last year | Y, M, W, D | D candle | 5 years |
+| Monthly | last month | M, W, D, 4H | 4H candle | 10 months |
+| Weekly | last week | W, D, 4H, 1H (and 2H…12H) | 1H candle | 3 weeks |
+| Daily | previous trading day (17:00 NY roll) | D, 4H, 1H, 15m (and 30m, 2H) | 1m candle (setting: 1 / 5 / 15m) | 10 days |
+| Inter-session | previous session (Asia 20:00–00:00, London 02:00–05:00, NY AM 09:30–12:00, NY Lunch 12:00–13:30, NY PM 13:30–16:00; editable) | 1m – 59m | 1m candle | 1 day |
+| 90-min | previous 90-min cycle (07:00, 08:30, 10:00 … all day) | 1m – 59m | 1m candle | 2 sessions |
+| 60-min | previous clock hour | 1m – 59m | 1m candle | 5 hours |
+| 30-min | previous half hour | 1m – 10m | 1m candle | 2 hours |
+| 10-min | previous 10 minutes | 1m – 10m | 1m candle (setting: 30s needs TradingView Plus+) | 1 hour |
+
+- **Broken:** while the period is running, the SMT is removed as soon as the lagging index also takes its level (the
+  divergence is gone). Once the period has closed, it is removed when price on this chart trades beyond the SMT's high
+  (bearish) or low (bullish), or when its time above runs out.
+- Each level is computed on its confirmation timeframe (`request.security`, closed candles only), so nothing repaints.
+  Lower-timeframe history is limited by the TradingView plan (e.g. 1m data reaches back only a few days), so older
+  Daily SMTs may not be drawn on a 4H/D chart.
+- A Python replay of the rule on the scanner's NAS100/US500 5m data (11–13 Nov) found the Daily bearish SMT of Thu 12 Nov
+  (US500 took Wednesday's high, NAS100 stopped at 28548.9 below 28592.2) and the 60-min bullish SMT at Fri 13 Nov 11:20
+  (NAS100 took 27619.9, US500 held); 60-min gave 3–8 per day, 90-min 2–4, sessions about 1.
 
 ## Settings (both)
 | Setting | Default | Meaning |
