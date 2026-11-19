@@ -144,11 +144,18 @@ Install like step 2 above (new indicator, paste, save as "ICT SMT", add to chart
 | Monthly | last month | M, W, D, 4H | 4H candle | 10 months |
 | Weekly | last week | W, D, 4H, 1H (and 2H…12H) | 1H candle | 3 weeks |
 | Daily | previous trading day (17:00 NY roll) | D, 4H, 1H, 15m (and 30m, 2H) | 1m candle (setting: 1 / 5 / 15m) | 10 days |
-| Inter-session | previous session (Asia 20:00–00:00, London 02:00–05:00, NY AM 09:30–12:00, NY Lunch 12:00–13:30, NY PM 13:30–16:00; editable) | 1m – 59m | 1m candle | 1 day |
-| 90-min | previous 90-min cycle (07:00, 08:30, 10:00 … all day) | 1m – 59m | 1m candle | 2 sessions |
-| 60-min | previous clock hour | 1m – 59m | 1m candle | 5 hours |
-| 30-min | previous half hour | 1m – 10m | 1m candle | 2 hours |
-| 10-min | previous 10 minutes | 1m – 10m | 1m candle (setting: 30s needs TradingView Plus+) | 1 hour |
+| Inter-session | previous session (Asia 18:00–02:29, London 02:30–07:29, NY AM 07:30–11:29, NY Lunch 11:30–12:59, NY PM 13:00–16:45; editable) | 1m – 59m | 1m candle | 1 day |
+| 90-min | previous 90-min cycle (07:00, 08:30, 10:00 … all day) | 1m – 59m | 1m candle (setting: 5 seconds) | 2 sessions |
+| 60-min | previous clock hour | 1m – 59m | 1m candle (setting: 5 seconds) | 5 hours |
+| 30-min | previous half hour | 1m – 10m | 1m candle (setting: 5 seconds) | 2 hours |
+| 10-min | previous 10 minutes | 1m – 10m | 1m candle (setting: 5 seconds) | 1 hour |
+
+- **Asia filter** ("Hide 90 / 60 / 30 / 10-min SMTs that form in Asia", on by default): a short-cycle SMT is not shown
+  when the first index took its level during the Asia session. On the 11–13 Nov NAS100/US500 replay this hid 3 of 6
+  90-min and 6 of 14 60-min SMTs.
+- **Default confirmation is 1 minute**, which works on the free plan. "Confirmation candle → 90 / 60 / 30 / 10-min SMT →
+  5 seconds" needs TradingView Plus or higher (otherwise the indicator stops with an error), and 5-second history covers
+  only a few hours.
 
 - **Broken:** while the period is running, the SMT is removed as soon as the lagging index also takes its level (the
   divergence is gone). Once the period has closed, it is removed when price on this chart trades beyond the SMT's high
