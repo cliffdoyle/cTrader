@@ -55,3 +55,4 @@ Whenever you discover something new about this server—a new tool, a parameter 
 ## Current state
 See **Progress checkpoints** in [findings.md](./references/findings.md). As of 2026-10-17 the scanner runs locally as a top-down analysis dashboard. Backtest and event study found no mechanical edge in S1–S4 or in ~3000 ICT filter combinations; the user stopped the search and setup pop-ups are muted. Research tools: `python -m ictscan.backtest` and `python -m ictscan.research` (see findings.md).
 **Since 2026-10-24 the user's main strategy is MMXM** (ICT market maker models with SMT across NAS100/US30/US500) — rules in [strategy-mmxm.md](./references/strategy-mmxm.md), live on https://scanner.zuristay.com (Open API, droplet) with MMXM pop-ups on; S1–S4 stay muted.
+**Next (planned 2026-11-25, not built):** Tom Camp's 4H manipulation candle scanner across ~45 markets — draft rules in [strategy-m4h.md](./references/strategy-m4h.md).
