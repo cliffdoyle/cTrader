@@ -114,12 +114,15 @@ class Store:
         return json.loads(r[0]) if r else None
 
     @classmethod
-    def _note_cond(cls, grades=None, symbols=None, kinds=None):
+    def _note_cond(cls, grades=None, symbols=None, kinds=None, also=()):
+        """`also` = setup-id LIKE patterns that pass the filters (e.g. '%-M4H-%' for a kind with its own page)."""
         cond, args = cls._filter(grades, symbols, kinds)
         if not cond:
             return "", []
         # reports (WEEKLY-…) are not setups and pass every dashboard filter
-        return f" AND (setup_id LIKE 'WEEKLY-%' OR setup_id IN (SELECT id FROM setups WHERE {' AND '.join(cond)}))", args
+        extra = "".join(" OR setup_id LIKE ?" for _ in also)
+        return (f" AND (setup_id LIKE 'WEEKLY-%'{extra} OR setup_id IN (SELECT id FROM setups WHERE {' AND '.join(cond)}))",
+                [*also, *args])
 
     def add_notification(self, setup_id, symbol, stage, level, t, title, body):
         """A notification that is not a setup stage (e.g. the weekly MMXM report); ignored if it already exists."""
@@ -128,14 +131,14 @@ class Store:
                                VALUES (?,?,?,?,?,?,?,?,0)""", (setup_id, symbol, stage, level, t, utcnow().isoformat(), title, body))
             return cur.rowcount
 
-    def notifications(self, after_id=0, limit=100, unread_only=False, grades=None, symbols=None, kinds=None):
-        gc, gargs = self._note_cond(grades, symbols, kinds)
+    def notifications(self, after_id=0, limit=100, unread_only=False, grades=None, symbols=None, kinds=None, also=()):
+        gc, gargs = self._note_cond(grades, symbols, kinds, also)
         q = "SELECT * FROM notifications WHERE id>?" + (" AND read=0" if unread_only else "") + gc + " ORDER BY t DESC, id DESC LIMIT ?"
         with self._conn() as c:
             return [dict(r) for r in c.execute(q, (after_id, *gargs, limit)).fetchall()]
 
-    def unread_count(self, grades=None, symbols=None, kinds=None):
-        gc, gargs = self._note_cond(grades, symbols, kinds)
+    def unread_count(self, grades=None, symbols=None, kinds=None, also=()):
+        gc, gargs = self._note_cond(grades, symbols, kinds, also)
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM notifications WHERE read=0" + gc, gargs).fetchone()[0]
 
@@ -179,5 +182,5 @@ def describe(s, ev):
         parts.append(f"Entry {s['entry']} · Stop {s['stop']} · TP1 {s['tp1']} ({s['rr']}R)")
     if ev["stage"] in ("target", "stopped", "breakeven", "expired") and s.get("result_r") is not None:
         parts.append(f"Result {s['result_r']:+}R")
-    parts.append(f"{ev['ny']} NY · score {s['score']}/7" + (f" · grade {s['grade']}" if s.get("grade") else ""))
+    parts.append(f"{ev['ny']} NY · score {s['score']}/{len(s.get('checklist') or []) or 7}" + (f" · grade {s['grade']}" if s.get("grade") else ""))
     return title, " · ".join(parts), LEVEL.get(ev["stage"], "info")

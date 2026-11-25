@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICT Scanner — 4H manipulation</title><link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script></head>
+<body>
+<main>
+  <div class="m4h-warn"><b>Unproven — watch list, not signals.</b> Tom Camp's 4H manipulation candle was backtested on 46 markets
+    over 13 months (costs included): every entry and target lost money, in every session and in both halves of the year.
+    The scanner lists every candle so it can be studied live; pop-ups only for candles with the daily bias and 4H momentum.</div>
+
+  <div id="detail" style="display:none">
+    <div class="section-head"><h2 id="d-title"></h2><span class="count" id="d-sub"></span></div>
+    <div class="panel"><div id="chart" class="chart"></div></div>
+    <div class="panel"><table class="matrix" id="d-plans"></table></div>
+    <div class="panel small" id="d-checks"></div>
+  </div>
+  <div class="section-head"><h2>Manipulation candles</h2><span class="count" id="sub"></span></div>
+  <div class="m4h-bar">
+    <div class="tabs seg" id="f-scope"></div>
+    <div class="tabs seg" id="f-class"></div>
+    <div class="tabs seg" id="f-days"></div>
+  </div>
+  <div class="panel"><table class="matrix" id="list"></table></div>
+
+  <div id="detail" style="display:none">
+    <div class="section-head"><h2 id="d-title"></h2><span class="count" id="d-sub"></span></div>
+    <div class="panel"><div id="chart" class="chart"></div></div>
+    <div class="panel"><table class="matrix" id="d-plans"></table></div>
+    <div class="panel small" id="d-checks"></div>
+  </div>
+
+  <div class="section-head"><h2>Record</h2><span class="count">simulated from candles, spreads included</span></div>
+  <div class="panel"><table class="matrix" id="record"></table></div>
+
+  <div class="section-head"><h2>Markets</h2><span class="count" id="board-sub"></span></div>
+  <div class="panel"><table class="matrix" id="board"></table></div>
+
+  <footer class="note">A manipulation candle takes the previous 4H candle's high (low) and closes below (above) the previous candle's
+    body. Entries: E1 at the 4H close · E2 limit at 50 % · E3 limit at a 1H/30m imbalance inside the candle · E4 the same pattern
+    on 30m inside the candle (its own stop) · E5 limit at 70.5 %. Stop beyond the candle's extreme. Targets: 2R, the nearest
+    untaken 4H/D1 swing (only if ≥ 2R), the candle's far end (limits only). Limits expire after three 4H candles.
+    Pepperstone 4H candles (17, 21, 01, 05, 09, 13 New York). Not trading advice; the scanner never places orders.</footer>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/chart.js"></script>
+<script>
+startShell();
+const ENTRIES = ['E1', 'E2', 'E3', 'E4', 'E5'], TARGETS = ['T2R', 'TLIQ', 'TLOW'];
+const TNAME = { T2R: '2R', TLIQ: 'Swing liquidity', TLOW: 'Candle end' };
+const ENAME = { E1: '4H close', E2: '50 %', E3: 'Imbalance', E4: 'Duplicate 30m', E5: 'OTE 70.5 %' };
+const OUT = { target: 'target', stopped: 'stopped', missed: 'missed', expired: 'expired', pending: 'waiting', open: 'in trade',
+  no_target: 'no target', too_close: '< 2R', invalidated: 'invalid' };
+const CLASSES = ['all', 'fx', 'index', 'metal', 'energy', 'crypto'];
+let data = null, scope = 'alerts', cls = 'all', days = 3, selected = new URLSearchParams(location.search).get('id'), chart = null;
+
+function fmt(v, dg) { return v == null ? '—' : Number(v).toFixed(dg); }
+function outcome(t) {
+  if (!t) return '<span class="muted">—</span>';
+  if (t.R != null) return rCell(t.R);
+  const c = t.outcome === 'open' ? 'warn' : t.outcome === 'pending' ? 'info-t' : 'muted';
+  return `<span class="tiny ${c}">${OUT[t.outcome] || t.outcome}</span>`;
+}
+function tabs(id, items, cur, label, set) {
+  document.getElementById(id).innerHTML = items.map(([v, l]) => `<button data-v="${v}" class="${String(v) === String(cur) ? 'on' : ''}">${l}</button>`).join('');
+  document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { set(b.dataset.v); render(); });
+}
+function statCell(st) {
+  if (!st || !st.trades) return '<span class="muted">—</span>';
+  return `<span class="res-r ${st.avg_r > 0 ? 'bull' : 'bear'}">${fmtR(st.avg_r)}</span><div class="tiny muted">${st.trades} tr · ${st.win_rate ?? Math.round(st.wins / st.trades * 100)}% win</div>`;
+}
+
+function render() {
+  tabs('f-scope', [['alerts', 'Pop-up candles'], ['all', 'All candles']], scope, '', v => scope = v);
+  tabs('f-class', CLASSES.map(c => [c, c === 'all' ? 'All markets' : c.toUpperCase()]), cls, '', v => cls = v);
+  tabs('f-days', [[1, '24 h'], [3, '3 days'], [7, '7 days'], [14, '14 days']], days, '', v => { days = Number(v); load(); });
+  const rows = data.setups.filter(s => (scope === 'all' || s.alert) && (cls === 'all' || s.class === cls))
+    .sort((a, b) => b.conf_t.localeCompare(a.conf_t));
+  document.getElementById('sub').textContent = `${rows.length} shown · ${data.setups.length} in ${days} day${days > 1 ? 's' : ''}`;
+  const head = `<tr><th>4H close</th><th>Market</th><th>Session</th><th>Bias</th><th>Mom.</th>${ENTRIES.map(e => `<th title="${ENAME[e]}">${e}<div class="tiny muted">${ENAME[e]}</div></th>`).join('')}</tr>`;
+  document.getElementById('list').innerHTML = head + (rows.length ? rows.map(s => {
+    const cells = ENTRIES.map(e => {
+      const p = s.plans.find(x => x.id === e);
+      if (!p) return '<td class="muted">—</td>';
+      return `<td><div class="mono small">${fmt(p.entry, s.digits)}</div>${outcome(p.trades.find(t => t.target === 'T2R'))}</td>`;
+    }).join('');
+    return `<tr data-row="${esc(s.id)}" class="${s.id === selected ? 'sel' : ''}"><td class="small">${esc(nyShort(s.conf_t))}</td>
+      <td><b>${esc(s.symbol)}</b> ${dirTag(s.dir)}</td><td class="small">${esc(s.session)}</td>
+      <td>${s.bias ? '<span class="bull">✓</span>' : '<span class="muted">✗</span>'}</td><td>${s.momentum ? '<span class="bull">✓</span>' : '<span class="muted">✗</span>'}</td>${cells}</tr>`;
+  }).join('') : `<tr><td colspan="10" class="muted">No manipulation candle${scope === 'alerts' ? ' with bias and momentum' : ''} in this period.</td></tr>`);
+  document.querySelectorAll('#list tr[data-row]').forEach(tr => tr.onclick = () => { selected = tr.dataset.row; history.replaceState(null, '', '?id=' + encodeURIComponent(selected)); render(); showDetail(true); });
+
+  const rec = data.record || {}, bt = (data.backtest || {}).combos || {};
+  const rhead = `<tr><th>Entry</th>${TARGETS.map(t => `<th>${TNAME[t]}<div class="tiny muted">live 30 d (pop-ups / all) · backtest</div></th>`).join('')}</tr>`;
+  document.getElementById('record').innerHTML = rhead + ENTRIES.map(e => `<tr><td><b>${e}</b> <span class="small muted">${ENAME[e]}</span></td>${TARGETS.map(t => {
+    const k = `${e} ${t}`, a = (rec.alerts || {})[k], all = (rec.all || {})[k], b = bt[`bias+momentum|${e}|${t}`], bn = bt[`none|${e}|${t}`];
+    if (!a && !all && !b && !bn) return '<td class="muted">—</td>';
+    const live = x => x ? `${fmtR(x.avg_r)} <span class="tiny muted">(${x.trades})</span>` : '—';
+    return `<td><div class="small">${live(a)} / ${live(all)}</div><div class="tiny muted">backtest ${b ? fmtR(b.all.avg_r) : '—'} / ${bn ? fmtR(bn.all.avg_r) : '—'}</div></td>`;
+  }).join('')}</tr>`).join('');
+
+  const board = (data.board.rows || []).slice().sort((a, b) => a.class.localeCompare(b.class) || a.symbol.localeCompare(b.symbol));
+  const last = {};
+  data.setups.forEach(s => { const k = s.symbol + s.key_t.slice(0, 16); last[k] = s; });
+  document.getElementById('board-sub').textContent = data.board.t ? `${board.length} markets · updated ${nyShort(data.board.t)} NY` : '';
+  document.getElementById('board').innerHTML = `<tr><th>Market</th><th>Class</th><th>Price</th><th>D1</th><th>H4</th><th>Last 4H candle</th><th>Next 4H close</th></tr>` +
+    board.filter(r => cls === 'all' || r.class === cls).map(r => {
+      const s = last[r.symbol + r.last_h4.slice(0, 16)];
+      const flag = s ? `<a href="?id=${encodeURIComponent(s.id)}">${dirTag(s.dir)}</a>` : '<span class="muted">no setup</span>';
+      return `<tr><td><b>${esc(r.symbol)}</b></td><td class="small muted">${esc(r.class)}</td><td class="mono small">${fmt(r.price, r.digits)}</td>
+        <td>${pill(r.d1)}</td><td>${pill(r.h4)}</td><td class="small">${esc(nyShort(r.last_h4))} ${flag}</td><td class="small">${esc(nyShort(r.next_close))}</td></tr>`;
+    }).join('');
+}
+
+async function showDetail(scroll) {
+  if (!selected) return;
+  let s;
+  try { s = await api('/api/m4h/setup/' + encodeURIComponent(selected)); } catch (e) { return; }
+  const m = s.m4h, dg = m.digits, buy = s.dir === 'bullish';
+  document.getElementById('detail').style.display = '';
+  if (scroll) document.getElementById('detail').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('d-title').innerHTML = `${esc(s.symbol)} ${dirTag(s.dir)} <span class="small muted">4H candle ${esc(nyShort(s.key_t))} NY</span>`;
+  document.getElementById('d-sub').textContent = `${m.session} · D1 ${m.d1_state || '—'} · H4 ${m.h4_state || '—'} · range ${m.range_atr ?? '—'}× ATR`;
+  document.getElementById('d-plans').innerHTML = `<tr><th>Entry</th><th>Price</th><th>Stop</th><th>Risk</th>${TARGETS.map(t => `<th>${TNAME[t]}</th>`).join('')}</tr>` +
+    m.plans.map(p => `<tr><td><b>${p.id}</b> <span class="small muted">${esc(p.name)}${p.fvg ? ` (${p.fvg.tf} ${fmt(p.fvg.low, dg)}–${fmt(p.fvg.high, dg)})` : ''}</span></td>
+      <td class="mono">${fmt(p.entry, dg)}</td><td class="mono">${fmt(p.stop, dg)}</td><td class="mono small">${fmt(p.risk, dg)}</td>
+      ${TARGETS.map(t => { const x = p.trades.find(y => y.target === t); return x ? `<td><div class="mono small">${fmt(x.tp, dg)}${x.rr != null ? ` <span class="muted">${x.rr}R</span>` : ''}</div>${outcome(x)}</td>` : '<td class="muted">—</td>'; }).join('')}</tr>`).join('');
+  document.getElementById('d-checks').innerHTML = s.checklist.map(c => `<div>${c.ok ? '<span class="bull">✓</span>' : '<span class="muted">✗</span>'} ${esc(c.name)} <span class="muted">— ${esc(c.detail)}</span></div>`).join('');
+  const el = document.getElementById('chart');
+  if (chart) chart.chart.remove();
+  chart = makeChart(el, dg);
+  const t0 = Math.floor(new Date(s.key_t).getTime() / 1000);
+  const end = Math.min(Math.floor(Date.now() / 1000), t0 + 4 * 86400);
+  const bars = await api(`/api/bars/${encodeURIComponent(s.symbol)}/m30?n=400&end=${end}`);
+  chart.series.setData(bars);
+  const [o, h, l, c] = m.C;
+  hline(chart, buy ? l : h, '#8a97a8', '4H extreme', 1);
+  m.plans.forEach(p => hline(chart, p.entry, p.id === 'E1' ? '#5aa9ff' : '#9b7bff', p.id, 2));
+  const e1 = m.plans.find(p => p.id === 'E1');
+  hline(chart, e1.stop, '#ff5d6c', 'stop', 0, 2);
+  const t2 = e1.trades.find(t => t.target === 'T2R'); if (t2) hline(chart, t2.tp, '#22c39a', 'E1 2R', 2);
+  const liq = m.plans.map(p => p.trades.find(t => t.target === 'TLIQ')).find(t => t && t.tp != null);
+  if (liq) hline(chart, liq.tp, '#22c39a', 'swing', 1);
+  addMarker(chart, bars, s.key_t, { position: buy ? 'belowBar' : 'aboveBar', color: '#f5b84a', shape: buy ? 'arrowUp' : 'arrowDown', text: '4H' });
+  chart.chart.timeScale().setVisibleRange({ from: t0 - 2 * 86400, to: end });
+}
+
+async function load() {
+  data = await api(`/api/m4h?days=${days}`);
+  setUnread(data.unread); setHealth(data.health); render();
+}
+load().then(showDetail); setInterval(load, 60000);
+</script>
+</body></html>

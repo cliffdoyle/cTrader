@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from ..config import (ALERT_SETUPS, DASH_PASSWORD, DASH_USER, DASHBOARD_SETUPS, DASHBOARD_SYMBOLS, DATA_SOURCE, DRAW_BRIDGE,
-                      DRAW_ORIGINS, FEED_TOKEN, SHOW_GRADES, SYMBOLS, TIMEFRAMES, WINDOW)
+                      DRAW_ORIGINS, FEED_TOKEN, M4H_ALERT, M4H_SYMBOLS, SHOW_GRADES, SYMBOLS, TIMEFRAMES, WINDOW)
 from ..engine.core import TF_SECONDS, make_bars
 from ..engine.cycles import KIND_TF, chart_cycles
 
@@ -20,6 +20,8 @@ STATIC = Path(__file__).parent / "static"
 ACTIVE = ("watch", "armed", "limit", "triggered")
 DASH_SYMS = tuple(s for s in (DASHBOARD_SYMBOLS or SYMBOLS) if s in SYMBOLS)
 FILT = {"grades": SHOW_GRADES, "symbols": DASHBOARD_SYMBOLS, "kinds": DASHBOARD_SETUPS}
+# Notifications: the dashboard filter plus the 4H manipulation scanner (its own page, all markets).
+NFILT = {**FILT, "also": ("%-M4H-%",)}
 
 
 def _authorised(header):
@@ -166,6 +168,29 @@ def create_app(store, scanner=None):
     def swing_page():
         return page("swing.html")
 
+    @app.get("/m4h")
+    def m4h_page():
+        return page("m4h.html")
+
+    @app.get("/api/m4h")
+    def m4h_api(days: float = 3):
+        """4H manipulation scanner: market board, candles of the last `days`, live record (30 days) and the backtest."""
+        since = (datetime.now(timezone.utc) - timedelta(days=max(0.5, min(days, 30)))).isoformat()
+        month = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        recs = store.setups(kinds=["M4H"], limit=3000)
+        return {"unread": store.unread_count(**NFILT), "health": store.get_meta("health"),
+                "board": store.get_meta("m4h_board") or {}, "alert_rule": M4H_ALERT,
+                "setups": [m4h_brief(s) for s in recs if s["key_t"] >= since],
+                "record": m4h_record([s for s in recs if s["key_t"] >= month]),
+                "backtest": store.get_meta("backtest:m4h")}
+
+    @app.get("/api/m4h/setup/{sid}")
+    def m4h_setup(sid: str):
+        s = store.setup(sid)
+        if not s or s.get("setup") != "M4H":
+            raise HTTPException(404, "unknown setup")
+        return s
+
     @app.get("/api/swing")
     def swing():
         """MMXM swing setups only: live ones, the full history, and their record (overall and per index)."""
@@ -174,7 +199,7 @@ def create_app(store, scanner=None):
         closed = [s for s in everything if s["stage"] not in ACTIVE]
         rec = performance(closed, days=36500)
         by_sym = {sym: performance([s for s in closed if s["symbol"] == sym], days=36500)["all"] for sym in DASH_SYMS}
-        return {"unread": store.unread_count(**FILT), "health": store.get_meta("health"),
+        return {"unread": store.unread_count(**NFILT), "health": store.get_meta("health"),
                 "active": [brief(s) for s in active], "history": [brief(s) for s in closed],
                 "record": rec["all"], "by_symbol": by_sym,
                 "since": min((s["timeline"][0]["t"] for s in everything if s["timeline"]), default=None)}
@@ -253,7 +278,7 @@ def create_app(store, scanner=None):
             })
         active = store.setups(active_only=True, limit=200, **FILT)
         closed = [s for s in store.setups(limit=1000, **FILT) if s["stage"] not in ACTIVE]
-        return {"health": store.get_meta("health"), "unread": store.unread_count(**FILT), "symbols": rows,
+        return {"health": store.get_meta("health"), "unread": store.unread_count(**NFILT), "symbols": rows,
                 "muted": store.get_meta("alerts_muted", False), "show_grades": list(SHOW_GRADES),
                 "dashboard": {"symbols": list(DASH_SYMS), "setups": list(DASHBOARD_SETUPS)},
                 "stats": performance(closed, days=30), "smt": store.get_meta("smt"),
@@ -295,7 +320,7 @@ def create_app(store, scanner=None):
 
     @app.get("/api/bars/{sym}/{tf}")
     def bars(sym: str, tf: str, n: int = 300, end: int | None = None):
-        if sym not in SYMBOLS or tf not in TF_SECONDS:
+        if (sym not in SYMBOLS and sym not in M4H_SYMBOLS) or tf not in TF_SECONDS:
             raise HTTPException(404, "unknown symbol/timeframe")
         rows = store.load_bars(sym, tf, 5000 if end else min(n, 3000))
         if end:
@@ -338,16 +363,16 @@ def create_app(store, scanner=None):
     @app.get("/api/notifications")
     def notifications(after_id: int = 0, limit: int = 100, unread: bool = False):
         muted = store.get_meta("alerts_muted", False)
-        items = store.notifications(after_id, limit, unread, **FILT)
+        items = store.notifications(after_id, limit, unread, **NFILT)
         for n in items:  # setup ids look like SYMBOL-KIND-…
             kind = (n["setup_id"] or "").split("-")[1] if (n["setup_id"] or "").count("-") else ""
             n["popup"] = (not muted) or kind in ALERT_SETUPS
-        return {"items": items, "unread": store.unread_count(**FILT), "muted": muted, "alert_setups": list(ALERT_SETUPS)}
+        return {"items": items, "unread": store.unread_count(**NFILT), "muted": muted, "alert_setups": list(ALERT_SETUPS)}
 
     @app.post("/api/notifications/read")
     def mark_read(ids: list[int] | None = Body(default=None, embed=True)):
         store.mark_read(ids)
-        return {"unread": store.unread_count(**FILT)}
+        return {"unread": store.unread_count(**NFILT)}
 
     @app.get("/api/health")
     def health():
@@ -363,6 +388,33 @@ def create_app(store, scanner=None):
         return {"ok": True}
 
     return app
+
+
+def m4h_brief(s):
+    m = s["m4h"]
+    return {"id": s["id"], "symbol": s["symbol"], "dir": s["dir"], "stage": s["stage"], "key_t": s["key_t"],
+            "conf_t": m["conf_t"], "session": m["session"], "bias": m["bias"], "momentum": m["momentum"],
+            "alert": m["alert"], "class": m["class"], "digits": m["digits"], "C": m["C"], "hod_held": m["hod_held"],
+            "plans": [{"id": p["id"], "entry": p["entry"], "stop": p["stop"],
+                       "trades": [{k: t[k] for k in ("target", "tp", "rr", "outcome", "R")} for t in p["trades"]]}
+                      for p in m["plans"]]}
+
+
+def m4h_record(recs):
+    """Closed simulated trades of stored M4H candles per entry × target, for all candles and for pop-up ones."""
+    out = {}
+    for scope in ("all", "alerts"):
+        groups = {}
+        for s in recs:
+            if scope == "alerts" and not s["m4h"]["alert"]:
+                continue
+            for p in s["m4h"]["plans"]:
+                for t in p["trades"]:
+                    if t.get("R") is not None:
+                        groups.setdefault(f"{p['id']} {t['target']}", []).append(t["R"])
+        out[scope] = {k: {"trades": len(v), "wins": sum(r > 0 for r in v), "total_r": round(sum(v), 1),
+                          "avg_r": round(sum(v) / len(v), 3)} for k, v in sorted(groups.items())}
+    return out
 
 
 def mode_of(s):

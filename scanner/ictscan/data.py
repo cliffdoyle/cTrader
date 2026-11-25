@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from .config import WINDOW
 from .engine.core import TF_SECONDS
 
-CALENDAR = {"m5": 1.7, "m15": 1.7, "h1": 1.6, "h4": 1.6, "d1": 1.5, "w1": 1.05}
+CALENDAR = {"m5": 1.7, "m15": 1.7, "m30": 1.7, "h1": 1.6, "h4": 1.6, "d1": 1.5, "w1": 1.05}
 PAGE = 1000
 
 

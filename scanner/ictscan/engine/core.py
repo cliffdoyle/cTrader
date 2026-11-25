@@ -5,7 +5,7 @@ import bisect
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-TF_SECONDS = {"m5": 300, "m15": 900, "h1": 3600, "h4": 14400, "d1": 86400, "w1": 604800}
+TF_SECONDS = {"m5": 300, "m15": 900, "m30": 1800, "h1": 3600, "h4": 14400, "d1": 86400, "w1": 604800}
 PATH_ORDER = ("d1", "h4", "h1", "m15", "m5")
 
 

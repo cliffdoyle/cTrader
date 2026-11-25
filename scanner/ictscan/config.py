@@ -21,14 +21,14 @@ SYMBOLS = {
 # Use ("A", "B", "C") to list everything again.
 SHOW_GRADES = ("A",)
 # Setups whose notifications pop up even while the old S1–S4 alerts are muted (store meta "alerts_muted").
-ALERT_SETUPS = ("MMXM",)
+ALERT_SETUPS = ("MMXM", "M4H")
 # What the dashboard shows (all symbols are still scanned and stored). Empty tuple = no restriction.
 DASHBOARD_SYMBOLS = ("NAS100", "US30", "US500")
 DASHBOARD_SETUPS = ("MMXM",)
 
 TIMEFRAMES = ("w1", "d1", "h4", "h1", "m15", "m5")
 # Bars kept in memory per scan (the cache in SQLite can hold more).
-WINDOW = {"w1": 200, "d1": 400, "h4": 600, "h1": 1000, "m15": 1000, "m5": 2000}
+WINDOW = {"w1": 200, "d1": 400, "h4": 600, "h1": 1000, "m30": 1500, "m15": 1000, "m5": 2000}
 # How often each timeframe is re-fetched (seconds); lower timeframes every scan.
 REFRESH = {"w1": 3600, "d1": 900, "h4": 300, "h1": 300, "m15": 300, "m5": 0}
 
@@ -67,6 +67,37 @@ PARAMS = {
     "enabled_setups": ["S1", "S2", "S3", "S4"],
 }
 
+# 4H manipulation candle scanner (engine/m4h.py, strategy-m4h.md). Its own market list and timeframes; the existing
+# analysis above is unchanged. (asset class, digits, pip, spread, cost): spread = stop buffer (typical spread),
+# cost = round trip incl. commission (Razor: FX/metals ≈ $7 per lot), both in price; from live quotes 2026-11-25 × ~1.5.
+_M4H = """
+EURUSD fx 5 0.0001 0.00002 0.00017   GBPUSD fx 5 0.0001 0.00003 0.00022   AUDUSD fx 5 0.0001 0.00002 0.00017
+NZDUSD fx 5 0.0001 0.00003 0.00012   USDJPY fx 3 0.01 0.003 0.017         USDCHF fx 5 0.0001 0.00003 0.00012
+USDCAD fx 5 0.0001 0.00003 0.0002    EURGBP fx 5 0.0001 0.00002 0.0001    EURJPY fx 3 0.01 0.01 0.02
+EURCHF fx 5 0.0001 0.00003 0.00012   EURAUD fx 5 0.0001 0.00007 0.00018   EURCAD fx 5 0.0001 0.00014 0.00028
+EURNZD fx 5 0.0001 0.00019 0.00035   GBPJPY fx 3 0.01 0.006 0.031         GBPCHF fx 5 0.0001 0.00011 0.00024
+GBPAUD fx 5 0.0001 0.00014 0.00028   GBPCAD fx 5 0.0001 0.00013 0.00027   GBPNZD fx 5 0.0001 0.00028 0.00049
+AUDJPY fx 3 0.01 0.007 0.018         AUDCHF fx 5 0.0001 0.00005 0.00015  AUDCAD fx 5 0.0001 0.00007 0.00018
+AUDNZD fx 5 0.0001 0.00009 0.0002    NZDJPY fx 3 0.01 0.01 0.022          NZDCHF fx 5 0.0001 0.00009 0.0002
+NZDCAD fx 5 0.0001 0.0001 0.00022    CADJPY fx 3 0.01 0.01 0.022          CADCHF fx 5 0.0001 0.00008 0.00019
+CHFJPY fx 3 0.01 0.016 0.031         XAUUSD metal 2 0.01 0.12 0.25        XAGUSD metal 3 0.01 0.03 0.05
+NAS100 index 1 1 1.1 1.7             US30 index 1 1 2.1 3.2               US500 index 1 1 0.4 0.6
+US2000 index 1 1 0.3 0.45            GER40 index 1 1 2.0 3.0             UK100 index 1 1 1.8 2.7
+FRA40 index 1 1 6.0 9.0              EUSTX50 index 1 1 1.7 2.6           JPN225 index 1 1 7.0 10.5
+AUS200 index 1 1 1.0 1.5             HK50 index 1 1 5.0 7.5              SpotCrude energy 3 0.01 0.028 0.042
+SpotBrent energy 3 0.01 0.032 0.048  NatGas energy 3 0.001 0.004 0.006   BTCUSD crypto 2 1 15 23
+ETHUSD crypto 2 0.1 2.0 3.0
+"""
+_w = _M4H.split()
+M4H_SYMBOLS = {_w[k]: {"class": _w[k + 1], "digits": int(_w[k + 2]), "pip": float(_w[k + 3]), "spread": float(_w[k + 4]),
+                       "cost": float(_w[k + 5])} for k in range(0, len(_w), 6)}
+M4H_TIMEFRAMES = ("d1", "h4", "m30")
+M4H_WINDOW = {"d1": 400, "h4": 600, "m30": 1500}
+M4H_LOOKBACK_DAYS = 14   # candles re-simulated every scan (older records keep their last stored state)
+# Pop-up filter for new M4H candles (user 2026-11-25: a manipulation candle in any session is valid); every candle is
+# still stored and listed on /m4h. sessions=() = no session restriction.
+M4H_ALERT = {"bias": True, "momentum": True, "sessions": ()}
+
 DATA_DIR = Path(os.environ.get("ICTSCAN_DATA", Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ictscan"))
 DB_PATH = DATA_DIR / "ictscan.db"
 LOG_PATH = DATA_DIR / "ictscan.log"
@@ -74,6 +105,8 @@ MCP_ENDPOINT = os.environ.get("ICTSCAN_MCP", "http://127.0.0.1:9876/mcp/")
 # Where candles come from: "mcp" = cTrader desktop app on this PC; "openapi" = cTrader Open API (no desktop app needed,
 # e.g. on a server). Open API credentials go in DATA_DIR/openapi.env or environment variables (see openapi.py).
 DATA_SOURCE = os.environ.get("ICTSCAN_SOURCE", "mcp").lower()
+# 4H manipulation scanner: runs where candles come from the Open API (the droplet); the PC scanner (desktop MCP) skips it.
+M4H_ENABLED = os.environ.get("ICTSCAN_M4H", "1" if DATA_SOURCE == "openapi" else "0") == "1"
 WEB_HOST = os.environ.get("ICTSCAN_HOST", "127.0.0.1")
 WEB_PORT = int(os.environ.get("ICTSCAN_PORT", "8765"))
 # Dashboard login (HTTP Basic). Required whenever the dashboard is reachable from the internet.

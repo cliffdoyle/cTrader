@@ -285,3 +285,10 @@ details.why summary { cursor:pointer; color:var(--muted); font-size:12px; } deta
 .warn { color:var(--warn); }
 details.smt-more { margin-top:10px; } details.smt-more > summary { cursor:pointer; color:var(--info); font-size:13px; margin-bottom:10px; }
 .smt-guide { margin:4px 0 12px; line-height:1.55; }
+
+/* 4H manipulation scanner (/m4h) */
+.m4h-warn { background:var(--warn-bg); border:1px solid rgba(245,184,74,.35); border-left:4px solid var(--warn); border-radius:12px;
+  padding:12px 16px; margin-top:18px; font-size:13px; line-height:1.5; }
+.m4h-bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.info-t { color:var(--info); }
+#d-checks { line-height:1.7; padding:12px 16px; }

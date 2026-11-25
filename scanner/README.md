@@ -59,6 +59,15 @@ grade (`grade()` in `engine/setups.py`):
 The dashboard lists and notifies only the grades in `SHOW_GRADES` (default `("A",)`); all setups are still stored.
 News is not checked — look at the economic calendar before acting.
 
+## 4H manipulation scanner (`/m4h`)
+Tom Camp's 4H manipulation candle on 46 markets (`M4H_SYMBOLS` in `config.py`: 28 FX pairs, gold/silver, 11 indices,
+oil/gas, BTC/ETH). Rules: [strategy-m4h.md](../.github/skills/ctrader-mcp/references/strategy-m4h.md); engine
+`engine/m4h.py`, records `engine/m4h_live.py`, page `web/static/m4h.html`. Runs only on the Open API scanner (the droplet;
+`ICTSCAN_M4H=1` forces it) once per M30 close: syncs D1/H4/M30, re-simulates the last 14 days (open setups up to 25 days),
+stores every candle and pops up only those with the D1 bias and H4 momentum (`M4H_ALERT`). **Backtest: no edge** — every
+entry × target × session lost money over 13 months; the page says so. Backtest: `python -m ictscan.m4h_backtest
+[--anchor broker|tom]` on `hist-m4h.db`; publish the summary to the page with `--publish <summary.json>`.
+
 ## MMXM — the main strategy (2026-10-24)
 The user's chosen model: ICT market maker buy/sell models with SMT across NAS100/US30/US500, rules in
 [strategy-mmxm.md](../.github/skills/ctrader-mcp/references/strategy-mmxm.md). Detector `engine/mmxm.py` (the sell model

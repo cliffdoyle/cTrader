@@ -59,4 +59,20 @@ Tom: 1 % per trade, 2 % once the account is +4 %, back to 1 % below +4 %. The da
 minimum volume and the volume for 1 % of a configurable balance; it flags setups whose minimum risk exceeds 2 %.
 
 ## Status
-- 2026-11-25: spec drafted; nothing built.
+- 2026-11-25: **Backtest — no edge.** Engine `scanner/ictscan/engine/m4h.py` (tests `tests/test_m4h.py`, 11), runner
+  `python -m ictscan.m4h_backtest [--anchor broker|tom]` on `DATA_DIR/hist-m4h.db` (Open API, 46 markets: D1 ~4 y,
+  H4 ~16 months, M30 21 Oct 2025 → 25 Nov 2026). 12,911 manipulation candles (broker H4). Every entry × target × filter
+  (none, bias+momentum, +London/NY AM, London/NY AM) is negative in both halves; none passes. E1 × 2R: 12,847 trades,
+  32.6 % wins, −0.104 R net (−0.022 R before costs), profitable on 6/46 markets. Bias+momentum makes it worse
+  (E1 × 2R −0.143 R). Tom's own 18:00 NY candles (rebuilt from M30): same picture (E1 × 2R −0.095 R net, −0.013 R gross).
+  Before costs every version is −0.08…+0.03 R/trade = a coin flip; costs add 0.08–0.25 R/trade.
+  Tom's "high of the day" claim: a candle that took the previous H4 high, is the day's high so far AND closed below the
+  previous body held to 17:00 NY 59.8 % (vs 35.5 % without the engulf; London 66.5 % vs 30.3 %) — real, but it does not
+  turn into profit at 2R, the swing target or the candle's far end. Results kept in `DATA_DIR/m4h-backtest*.json`,
+  reports in session `files/m4h-bt-v1.txt` / `m4h-bt-tom.txt`. Hand check NAS100 Tue 24 Nov 01:00 NY candle matched.
+  Live scanner deployed 2026-11-25 (user: build it; a manipulation candle in ANY session is valid): `/m4h` on
+  scanner.zuristay.com, runner step `Scanner.scan_m4h` once per M30 close (first run 86 s incl. 46-market backfill, then
+  ~9 s; container 111 MiB of 384), ~33 candles/day of which ~14/day pop up (D1 bias + H4 momentum, any session,
+  `M4H_ALERT`). Unrestricted by session the backtest is still negative in every session (E1 × 2R: Asia −0.07, London −0.10,
+  NY AM −0.13, PM −0.25 R). Backup `/root/ictscan-code-backup-20261125-104343.tgz`; summary published (meta `backtest:m4h`).
+- 2026-11-25: spec drafted.

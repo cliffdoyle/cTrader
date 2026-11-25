@@ -7,9 +7,10 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from . import weekly
-from .config import PARAMS, REFRESH, SCAN_DELAY_SECONDS, SYMBOLS, TIMEFRAMES, WINDOW
+from .config import (M4H_ENABLED, M4H_LOOKBACK_DAYS, M4H_SYMBOLS, M4H_TIMEFRAMES, M4H_WINDOW, PARAMS, REFRESH,
+                     SCAN_DELAY_SECONDS, SYMBOLS, TIMEFRAMES, WINDOW)
 from .data import parse, sync
-from .engine import mmxm
+from .engine import m4h, m4h_live, mmxm
 from .engine.context import Context
 from .engine.core import make_bars
 from .engine.mmxm_live import live_setups
@@ -29,6 +30,7 @@ class Scanner:
         self.last_fetch = {}
         self.stop = threading.Event()
         self.scan_now = threading.Event()
+        self.m4h_slot = None
 
     def health(self, status, message, **extra):
         h = {"status": status, "message": message, "at": datetime.now(timezone.utc).isoformat(), **extra}
@@ -107,6 +109,13 @@ class Scanner:
                     log.exception("SMT analysis failed (%s)", pair)
                     errors.append(f"SMT {pair}: {e}")
         try:
+            new_notes += self.scan_m4h(server_now, quiet_before, offline_since, errors)
+        except MCPUnavailable:
+            raise
+        except Exception as e:
+            log.exception("M4H scan failed")
+            errors.append(f"M4H: {e}")
+        try:
             new_notes += weekly.maybe_notify(self.store, server_now)
         except Exception as e:
             log.exception("weekly report failed")
@@ -119,6 +128,58 @@ class Scanner:
             msg += f"; caught up after downtime since {offline_since}"
         self.health("ok" if not errors else "degraded", msg, errors=errors, last_scan=server_now.isoformat(), duration_s=dur)
         log.info(msg)
+
+    def scan_m4h(self, server_now, quiet_before, offline_since, errors):
+        """4H manipulation candles on config.M4H_SYMBOLS, once per M30 close (every 30 minutes)."""
+        if not M4H_ENABLED:
+            return 0
+        slot = int(server_now.timestamp()) // 1800
+        if slot == self.m4h_slot:
+            return 0
+        bars_by_sym = {}
+        for sym in M4H_SYMBOLS:
+            try:
+                for tf in M4H_TIMEFRAMES:
+                    if tf != "m30" and sym in SYMBOLS:
+                        continue  # the main scan keeps D1/H4 of its own symbols fresh
+                    if tf == "d1" and self.m4h_slot is not None and slot % 2:
+                        continue  # D1 hourly
+                    sync(self.client, self.store, sym, tf, server_now)
+                b = {tf: make_bars(self.store.load_bars(sym, tf, M4H_WINDOW[tf]), tf) for tf in M4H_TIMEFRAMES}
+                if all(len(x) >= 50 for x in b.values()):
+                    bars_by_sym[sym] = b
+                else:
+                    errors.append(f"M4H {sym}: not enough history yet")
+            except MCPUnavailable:
+                raise
+            except Exception as e:  # one bad symbol must not stop the others
+                log.exception("M4H data failed for %s", sym)
+                errors.append(f"M4H {sym}: {e}")
+        # Keep following stored setups that are still open (a swing-liquidity target can take weeks), within the candles
+        # held in memory; older ones are closed as no longer tracked.
+        horizon = server_now - timedelta(days=25)
+        since = server_now - timedelta(days=M4H_LOOKBACK_DAYS)
+        stale = []
+        for a in self.store.setups(active_only=True, kinds=["M4H"], limit=2000):
+            conf = parse(a["m4h"]["conf_t"])
+            if conf < horizon:
+                a["stage"], a["stage_t"] = "done", server_now.isoformat()
+                a["m4h"]["untracked"] = True
+                stale.append(a)
+            else:
+                since = min(since, conf)
+        recs, board = m4h_live.live(bars_by_sym, server_now, (server_now - since).total_seconds() / 86400)
+        fresh = self.store.get_meta("m4h_initialized", False) and self.store.get_meta("m4h_rules") == m4h.RULES_VERSION
+        quiet = quiet_before if fresh else server_now.isoformat()
+        new = self.store.save_setups([r for r in recs if r["m4h"]["alert"]], quiet, offline_since)
+        self.store.save_setups([r for r in recs if not r["m4h"]["alert"]] + stale, "9999")  # listed, no pop-up
+        self.store.set_meta("m4h_board", {"t": server_now.isoformat(), "rows": board})
+        self.store.set_meta("m4h_initialized", True)
+        self.store.set_meta("m4h_rules", m4h.RULES_VERSION)
+        self.m4h_slot = slot
+        log.info("M4H: %d markets, %d candles in the last %.0f days, %d new notifications", len(bars_by_sym), len(recs),
+                 (server_now - since).total_seconds() / 86400, new)
+        return new
 
     def run_forever(self):
         backoff = 30
