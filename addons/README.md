@@ -98,6 +98,11 @@ Differences from the cTrader / MT5 add-ons:
   2 × 5m ATR away from it, one index trading back through its open while another stays short = SMT (all below → bearish,
   all above → bullish), live on the candle, until every index has traded through. One alert per open, per direction, per
   day. Replay on the week to 13 Nov: W.O 5, 09:30 open 5, 00:00 open 26 SMT moments (the chart only shows the current one).
+- **How far back** ("Sessions → Days", 1–60; "Previous days' highs / lows: days back", 1–60): session boxes for up to
+  60 trading days (from this chart's candles, so limited by the history the chart has loaded: on the free plan roughly
+  18 days on 5m, 50 on 15m), and the high/low of each older trading day as thin date-labelled lines (from 1H data,
+  shown up to H4). By default only older highs/lows that are still untaken are drawn ("Older days: hide highs / lows
+  already taken"); untick it to see the swept ones as dotted lines ending where they were taken.
 - **Marker clutter** ("SMT markers shown", default **Latest only**; "Short marker text", default on): only the newest SMT
   marker stays on the chart (or the latest 3 / all), as a small see-through label such as "SMT ▼ W.O" so the candles
   behind it stay visible; hover it for the full text and NY time. The panel and alerts still use every SMT.

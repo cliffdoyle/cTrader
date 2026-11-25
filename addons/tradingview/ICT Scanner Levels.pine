@@ -16,11 +16,13 @@ showSess = input.bool(true, "Session boxes", group = G_SESS)
 sAsia = input.bool(true, "Asia", group = G_SESS)
 sLondon = input.bool(true, "London", group = G_SESS)
 sNY = input.bool(false, "New York AM", group = G_SESS)
-sessDays = input.int(1, "Days", minval = 1, maxval = 5, group = G_SESS, tooltip = "Trading days of session boxes. The latest day also gets open/close ticks and dotted high/low lines that stop where price swept them.")
+sessDays = input.int(1, "Days", minval = 1, maxval = 60, group = G_SESS, tooltip = "Trading days of session boxes (1-60). The latest day also gets open/close ticks and dotted high/low lines that stop where price swept them. Boxes come from this chart's candles, so they only reach as far back as the chart has loaded (on a free plan about 18 days on 5m, about 50 days on 15m).")
 sessStyle = input.string("Kill zones", "Asia window", options = ["Kill zones", "Continuous"], group = G_SESS, tooltip = "Kill zones: Asia 20:00-00:00 and London 02:00-05:00 NY. Continuous: Asia 20:00-02:00 runs straight into London.")
 
 showBoxes = input.bool(true, "90-minute boxes (latest day)", group = G_LVL)
 showLevels = input.bool(true, "Key levels: PW / PD / session highs-lows / midnight open", group = G_LVL)
+pdDays = input.int(1, "Previous days' highs / lows: days back", minval = 1, maxval = 60, group = G_LVL, tooltip = "1 = only PDH / PDL. More = also the high and low of each older trading day (17:00 NY roll), thin lines labelled with the date, from 1H data. A line runs to the candle that took the level, or to the right edge while it is still untaken. Shown up to H4 charts.")
+pdHideSwept = input.bool(true, "Older days: hide highs / lows already taken", group = G_LVL, tooltip = "Keeps only the older highs / lows price has not traded through yet (untaken liquidity).")
 showCyc = input.bool(true, "Previous-cycle PXH / EQ / PXL", group = G_LVL)
 cMonth = input.bool(false, "Cycle: month", group = G_LVL)
 cWeek = input.bool(true, "Cycle: week", group = G_LVL)
@@ -213,6 +215,57 @@ engDW() =>
     [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15] = cycTrack(1)
     [b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = cycTrack(2)
     array.from(a1, a2, float(a6), a9, a10, float(a12), float(a13), float(a7), float(a14), float(a15), b1, b2, float(b6), b9, b10, float(b12), float(b13), float(b7), float(b14), float(b15))
+
+// Completed trading days, oldest first, NDH values each: [high, high time, low, low time, start, end,
+//  time a later candle first traded above the high, same below the low]; keeps the last n days
+NDH = 8
+engDays(int n) =>
+    var array<float> recs = array.new<float>()
+    var int dK = na
+    var int dS = na
+    var int dE = na
+    var float dH = na
+    var float dL = na
+    var int dHT = na
+    var int dLT = na
+    [k, st, en] = cycleOf(1, time)
+    if not na(k)
+        if na(dK) or k != dK
+            if not na(dK)
+                array.push(recs, dH)
+                array.push(recs, float(dHT))
+                array.push(recs, dL)
+                array.push(recs, float(dLT))
+                array.push(recs, float(dS))
+                array.push(recs, float(dE))
+                array.push(recs, na)
+                array.push(recs, na)
+                if array.size(recs) > n * NDH
+                    for j = 1 to NDH
+                        array.shift(recs)
+            dK := k
+            dS := st
+            dE := en
+            dH := high
+            dL := low
+            dHT := time
+            dLT := time
+        else
+            if high > dH
+                dH := high
+                dHT := time
+            if low < dL
+                dL := low
+                dLT := time
+    int m = int(array.size(recs) / NDH)
+    if m > 0
+        for i = 0 to m - 1
+            int b = i * NDH
+            if na(array.get(recs, b + 6)) and high > array.get(recs, b)
+                array.set(recs, b + 6, float(time))
+            if na(array.get(recs, b + 7)) and low < array.get(recs, b + 2)
+                array.set(recs, b + 7, float(time))
+    recs
 
 // The last n CLOSED bars packed as [high, low, close, time, atr] × n (the SMT works on closed candles only)
 pack(int n) =>
@@ -447,7 +500,7 @@ if tfSec <= 3600
                 cur := Rec.new(w, tdBar, wa, wb, high, low, time, time, open, close)
                 array.push(sessRecs, cur)
                 array.set(lastByW, w, cur)
-                if array.size(sessRecs) > 24
+                if array.size(sessRecs) > (sessDays + 1) * 3
                     array.shift(sessRecs)
             else
                 cur.upd()
@@ -478,6 +531,9 @@ if tfSec <= 1800
 
 // ───────────────────────────── Day / week / month cycles (H1 data, like the scanner) and level sweeps
 [dPH, dPL, dPS, dPE, dPF, dCK, dCS, dCE, dCH, dCL, dCF, wPH, wPL, wPS, wPE, wPF, wCK, wCS, wCE, wCH, wCL, wCF, mPH, mPL, mPS, mPE, mPF, mCK, mCS, mCE, mCH, mCL, mCF, atrH1] = request.security(syminfo.tickerid, "60", engChart(), calc_bars_count = 3000)
+// older days' highs / lows (only fetched when more than one day back is asked for)
+array<float> dHist = doLevels and pdDays > 1 ? request.security(syminfo.tickerid, "60", engDays(pdDays + 1), calc_bars_count = 3000) : na
+var int firstT = time
 // this chart's opening prices (only fetched when they are shown)
 array<float> chOpD = opensOn ? request.security(syminfo.tickerid, "D", engOpens(), calc_bars_count = 400) : na
 array<float> chOpI = opensOn and tier <= 3 ? request.security(syminfo.tickerid, "5", engIntraOpens(), calc_bars_count = 400) : na
@@ -538,6 +594,16 @@ lvl(string name, string tag, bool isHigh, float price, int formed, int taken, co
             ln(formed, price, taken, price, c, 1, line.style_dotted, false)
             lab += " swept " + hm(taken)
         txt(formed, isHigh ? price + pad : price - pad, lab, c, isHigh ? "above" : "below", false)
+
+// an older day's high / low: thin line to the candle that took it, or to the right edge while untaken
+histLvl(string name, bool isHigh, float price, int formed, float taken, color c, int lastT, float pad) =>
+    string lab = name + " " + fmt(price)
+    if na(taken)
+        ln(formed, price, lastT, price, c, 1, line.style_solid, true)
+    else
+        ln(formed, price, int(taken), price, c, 1, line.style_dotted, false)
+        lab += " swept " + str.format_time(int(taken), "EEE dd HH:mm", NYZ)
+    txt(formed, isHigh ? price + pad : price - pad, lab, c, isHigh ? "above" : "below", false)
 
 // ───────────────────────────── SMT (engine/smt.py): cycle SMT (90-min / day / week) + swing SMT (5m / 15m / 1H)
 type Ser
@@ -1097,6 +1163,24 @@ if barstate.islast
             bool dl = isLive(1, dCK, nowT)
             lvl("PDH", "PD", true, dl ? dPH : dCH, dl ? dPF : dCF, dl ? pdhT : na, chart.fg_color, lastT, lpad)
             lvl("PDL", "PD", false, dl ? dPL : dCL, dl ? dPF : dCF, dl ? pdlT : na, chart.fg_color, lastT, lpad)
+            // older days (newest first), skipping the day already drawn as PDH / PDL
+            if not na(dHist)
+                int pdS = dl ? dPS : dCS
+                int m = int(array.size(dHist) / NDH)
+                int shown = 0
+                color hc = color.new(chart.fg_color, 45)
+                if m > 0 and not na(pdS)
+                    for i = m - 1 to 0
+                        int b = i * NDH
+                        if shown < pdDays - 1 and array.get(dHist, b + 4) < pdS
+                            shown += 1
+                            string dn = str.format_time(int(array.get(dHist, b + 5)), "EEE dd MMM", NYZ)
+                            float tkH = array.get(dHist, b + 6)
+                            float tkL = array.get(dHist, b + 7)
+                            if not (pdHideSwept and not na(tkH))
+                                histLvl(dn + " H", true, array.get(dHist, b), math.max(int(array.get(dHist, b + 1)), firstT), tkH, hc, lastT, lpad)
+                            if not (pdHideSwept and not na(tkL))
+                                histLvl(dn + " L", false, array.get(dHist, b + 2), math.max(int(array.get(dHist, b + 3)), firstT), tkL, hc, lastT, lpad)
         for r in sessRecs
             string tag = r.w == 0 ? "Asia" : r.w == 1 ? "London" : "NY AM"
             if r.td == tdNow and allowTag(tag)
